@@ -131,6 +131,27 @@
 </head>
 <body>
 
+<div id="loginScreen" style="min-height:100vh; display:flex; align-items:center; justify-content:center; padding:20px;">
+  <div style="width:100%; max-width:340px; background:#fff; border-radius:14px; border:1px solid #E2E8F0; padding:24px 20px;">
+    <div style="text-align:center; margin-bottom:18px;">
+      <div style="width:48px; height:48px; border-radius:12px; background:#1D4ED8; color:#fff; font-weight:700; font-size:22px; display:flex; align-items:center; justify-content:center; margin:0 auto 10px;">B</div>
+      <div style="font-size:11px; letter-spacing:1px; text-transform:uppercase; color:#94A3B8; font-weight:600;">Bermejo Distribuciones</div>
+      <div style="font-size:17px; font-weight:700; margin-top:2px;">Cuentas corrientes</div>
+    </div>
+    <div class="field">
+      <label>Email</label>
+      <input id="loginEmail" type="email" placeholder="tu@email.com">
+    </div>
+    <div class="field">
+      <label>Contraseña</label>
+      <input id="loginPassword" type="password" placeholder="••••••••">
+    </div>
+    <div class="err-msg" id="loginError" style="display:none;"></div>
+    <button class="save-btn" id="loginBtn">Ingresar</button>
+  </div>
+</div>
+
+<div id="appContent" style="display:none;">
 <header>
   <div class="header-row">
     <div>
@@ -148,6 +169,7 @@
     <button id="importBtn" style="flex:1; background:#22344F; color:#DCE6F5; border:1px solid #2E4364; border-radius:8px; padding:8px 10px; font-size:12px; font-weight:600;">⬆ Restaurar backup</button>
     <input type="file" id="importFile" accept=".csv" style="display:none;">
   </div>
+  <button id="logoutBtn" style="margin-top:8px; width:100%; background:transparent; border:none; color:#5B7396; font-size:11px; text-decoration:underline;">Cerrar sesión</button>
 </header>
 
 <div class="ticket" id="ticket">
@@ -187,7 +209,8 @@
 
     <div class="field">
       <label>Cliente *</label>
-      <input id="f_cliente" placeholder="Nombre del negocio o persona">
+      <input id="f_cliente" list="clienteOptions" placeholder="Nombre del negocio o persona">
+      <datalist id="clienteOptions"></datalist>
     </div>
     <div class="field-row">
       <div class="field">
@@ -222,6 +245,7 @@
     <div class="err-msg" id="formError" style="display:none;"></div>
     <button class="save-btn" id="saveDebtBtn">Guardar deuda</button>
   </div>
+</div>
 </div>
 
 <script>
@@ -302,11 +326,43 @@ function attachListener() {
   );
 }
 
+auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(() => {});
+
 auth.onAuthStateChanged((user) => {
-  if (user) attachListener();
+  const loginScreen = document.getElementById("loginScreen");
+  const appContent = document.getElementById("appContent");
+  if (user) {
+    loginScreen.style.display = "none";
+    appContent.style.display = "block";
+    attachListener();
+  } else {
+    loginScreen.style.display = "flex";
+    appContent.style.display = "none";
+  }
 });
-auth.signInAnonymously().catch(() => {
-  setSyncStatus(false);
+
+document.getElementById("loginBtn").addEventListener("click", () => {
+  const email = document.getElementById("loginEmail").value.trim();
+  const password = document.getElementById("loginPassword").value;
+  const errEl = document.getElementById("loginError");
+  errEl.style.display = "none";
+  if (!email || !password) {
+    errEl.textContent = "Completá el email y la contraseña.";
+    errEl.style.display = "block";
+    return;
+  }
+  auth.signInWithEmailAndPassword(email, password).catch((err) => {
+    errEl.textContent = "Email o contraseña incorrectos.";
+    errEl.style.display = "block";
+  });
+});
+
+document.getElementById("loginPassword").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") document.getElementById("loginBtn").click();
+});
+
+document.getElementById("logoutBtn").addEventListener("click", () => {
+  auth.signOut();
 });
 
 // (las opciones de zona se generan dinámicamente en updateZonaOptions, llamada desde render)
@@ -346,8 +402,28 @@ function updateZonaOptions() {
   zonaFilterEl.value = zonas.includes(current) || current === "Todas" ? current : "Todas";
 }
 
+function getClienteDirectory() {
+  const map = new Map();
+  for (const d of debts) {
+    const key = (d.cliente || "").trim().toLowerCase();
+    if (!key) continue;
+    if (!map.has(key) || d.fechaEntrega >= map.get(key).fechaEntrega) {
+      map.set(key, d);
+    }
+  }
+  return map;
+}
+
+function updateClienteOptions() {
+  const dir = getClienteDirectory();
+  const datalist = document.getElementById("clienteOptions");
+  const names = Array.from(dir.values()).map(d => d.cliente).sort();
+  datalist.innerHTML = names.map(n => `<option value="${escapeHtml(n)}"></option>`).join("");
+}
+
 function render() {
   updateZonaOptions();
+  updateClienteOptions();
   const query = document.getElementById("searchInput").value.toLowerCase();
   const zonaFilter = document.getElementById("zonaFilter").value;
   const estadoFilter = document.getElementById("estadoFilter").value;
@@ -468,6 +544,17 @@ function removeDebt(id) {
   db.collection(DEBTS_COLLECTION).doc(id).delete()
     .catch(() => alert("No se pudo eliminar. Revisá tu conexión."));
 }
+
+document.getElementById("f_cliente").addEventListener("input", (e) => {
+  const dir = getClienteDirectory();
+  const match = dir.get(e.target.value.trim().toLowerCase());
+  if (match) {
+    const zonaEl = document.getElementById("f_zona");
+    const telEl = document.getElementById("f_telefono");
+    if (!zonaEl.value) zonaEl.value = match.zona || "";
+    if (!telEl.value) telEl.value = match.telefono || "";
+  }
+});
 
 document.getElementById("searchInput").addEventListener("input", render);
 document.getElementById("zonaFilter").addEventListener("change", render);
