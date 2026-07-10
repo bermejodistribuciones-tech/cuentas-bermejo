@@ -192,14 +192,8 @@
     <div class="field-row">
       <div class="field">
         <label>Zona</label>
-        <select id="f_zona">
-          <option>Bermejo</option>
-          <option>Gran Mendoza</option>
-          <option>Maipu</option>
-          <option>Rivadavia</option>
-          <option>Junin</option>
-          <option>Otra</option>
-        </select>
+        <input id="f_zona" list="zonaOptions" placeholder="Escribí o elegí una zona">
+        <datalist id="zonaOptions"></datalist>
       </div>
       <div class="field">
         <label>Teléfono (wa.me)</label>
@@ -248,7 +242,7 @@ db.enablePersistence({ synchronizeTabs: true }).catch((err) => {
   console.warn("Persistencia offline no disponible:", err.code);
 });
 
-const ZONAS = ["Bermejo", "Gran Mendoza", "Maipu", "Rivadavia", "Junin", "Otra"];
+// Las zonas ya no son fijas: se arman a partir de lo que el usuario va escribiendo
 
 const STATUS_META = {
   vencido:    { label: "Vencido",    fg: "#B42318", bg: "#FEE4E2", dot: "#DC2626" },
@@ -315,13 +309,7 @@ auth.signInAnonymously().catch(() => {
   setSyncStatus(false);
 });
 
-// populate zona filter options
-const zonaFilterEl = document.getElementById("zonaFilter");
-ZONAS.forEach(z => {
-  const opt = document.createElement("option");
-  opt.value = z; opt.textContent = z;
-  zonaFilterEl.appendChild(opt);
-});
+// (las opciones de zona se generan dinámicamente en updateZonaOptions, llamada desde render)
 
 document.getElementById("f_fechaEntrega").value = todayISO();
 document.getElementById("f_fechaLimite").value = todayISO();
@@ -345,7 +333,21 @@ function getClients() {
   });
 }
 
+function updateZonaOptions() {
+  const zonas = Array.from(new Set(debts.map(d => (d.zona || "").trim()).filter(Boolean))).sort();
+
+  const datalist = document.getElementById("zonaOptions");
+  datalist.innerHTML = zonas.map(z => `<option value="${escapeHtml(z)}"></option>`).join("");
+
+  const zonaFilterEl = document.getElementById("zonaFilter");
+  const current = zonaFilterEl.value || "Todas";
+  zonaFilterEl.innerHTML = `<option value="Todas">Todas las zonas</option>` +
+    zonas.map(z => `<option value="${escapeHtml(z)}">${escapeHtml(z)}</option>`).join("");
+  zonaFilterEl.value = zonas.includes(current) || current === "Todas" ? current : "Todas";
+}
+
 function render() {
+  updateZonaOptions();
   const query = document.getElementById("searchInput").value.toLowerCase();
   const zonaFilter = document.getElementById("zonaFilter").value;
   const estadoFilter = document.getElementById("estadoFilter").value;
