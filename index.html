@@ -127,6 +127,23 @@
   }
   .err-msg { color: #B42318; font-size: 12px; margin-bottom: 10px; }
   .save-note { position: fixed; bottom: 82px; right: 20px; font-size: 11px; color: #94A3B8; }
+
+  .tabs { margin: 14px 14px 0; display: flex; gap: 8px; }
+  .tab-btn {
+    flex: 1; padding: 9px; border-radius: 10px; border: 1px solid #E2E8F0;
+    background: #fff; color: #64748B; font-size: 13px; font-weight: 600;
+  }
+  .tab-btn.active { background: #16233A; color: #fff; border-color: #16233A; }
+
+  #clientesList { margin: 14px 14px 0; display: flex; flex-direction: column; gap: 10px; }
+  .cliente-row {
+    background: #fff; border-radius: 12px; border: 1px solid #E2E8F0;
+    padding: 12px 14px; display: flex; justify-content: space-between; align-items: center; gap: 8px;
+  }
+  .cliente-info { min-width: 0; flex: 1; }
+  .cliente-nombre { font-weight: 700; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cliente-meta { color: #94A3B8; font-size: 11px; margin-top: 2px; }
+  .cliente-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
 </style>
 </head>
 <body>
@@ -172,6 +189,12 @@
   <button id="logoutBtn" style="margin-top:8px; width:100%; background:transparent; border:none; color:#5B7396; font-size:11px; text-decoration:underline;">Cerrar sesión</button>
 </header>
 
+<div class="tabs">
+  <button class="tab-btn active" id="tabDeudas">Cuentas</button>
+  <button class="tab-btn" id="tabClientes">Clientes</button>
+</div>
+
+<div id="viewDeudas">
 <div class="ticket" id="ticket">
   <div class="ticket-head">⚠️ <span id="ticketCount">Para cobrar hoy</span></div>
   <div id="alertsList"></div>
@@ -196,8 +219,20 @@
 </div>
 
 <div id="clientList"></div>
+</div>
+
+<div id="viewClientes" style="display:none;">
+  <div class="controls" style="margin-top:14px;">
+    <div class="search-wrap">
+      <span>🔍</span>
+      <input id="clienteSearchInput" placeholder="Buscar cliente...">
+    </div>
+  </div>
+  <div id="clientesList"></div>
+</div>
 
 <button class="fab" id="fabBtn">+</button>
+<button class="fab" id="fabClienteBtn" style="display:none;">+</button>
 <div class="save-note" id="saveNote" style="display:none;">Guardado ✓</div>
 
 <div class="modal-overlay" id="modalOverlay">
@@ -246,6 +281,32 @@
     <button class="save-btn" id="saveDebtBtn">Guardar deuda</button>
   </div>
 </div>
+
+<div class="modal-overlay" id="clienteModalOverlay">
+  <div class="modal-sheet">
+    <div class="modal-head">
+      <div class="modal-title" id="clienteModalTitle">Nuevo cliente</div>
+      <button class="close-btn" id="closeClienteModalBtn">✕</button>
+    </div>
+
+    <div class="field">
+      <label>Nombre *</label>
+      <input id="c_nombre" placeholder="Nombre del negocio o persona">
+    </div>
+    <div class="field">
+      <label>Zona</label>
+      <input id="c_zona" list="zonaOptions" placeholder="Escribí o elegí una zona">
+    </div>
+    <div class="field">
+      <label>Teléfono (wa.me)</label>
+      <input id="c_telefono" placeholder="5492634123456">
+    </div>
+
+    <div class="err-msg" id="clienteFormError" style="display:none;"></div>
+    <button class="save-btn" id="saveClienteBtn">Guardar cliente</button>
+    <button id="deleteClienteBtn" style="display:none; width:100%; margin-top:8px; padding:10px; border-radius:10px; background:#FEE4E2; color:#B42318; border:none; font-weight:600; font-size:13px;">Eliminar cliente</button>
+  </div>
+</div>
 </div>
 
 <script>
@@ -261,6 +322,7 @@ firebase.initializeApp(FIREBASE_CONFIG);
 const auth = firebase.auth();
 const db = firebase.firestore();
 const DEBTS_COLLECTION = "deudas";
+const CLIENTES_COLLECTION = "clientes";
 
 db.enablePersistence({ synchronizeTabs: true }).catch((err) => {
   console.warn("Persistencia offline no disponible:", err.code);
@@ -309,8 +371,11 @@ function setSyncStatus(ok, connecting) {
 }
 
 let debts = [];
+let clientesData = [];
 let expandedClient = null;
 let dataLoaded = false;
+let clientesLoaded = false;
+let editingClienteId = null;
 
 function attachListener() {
   db.collection(DEBTS_COLLECTION).onSnapshot(
@@ -323,6 +388,15 @@ function attachListener() {
     (err) => {
       setSyncStatus(false);
     }
+  );
+  db.collection(CLIENTES_COLLECTION).onSnapshot(
+    (snapshot) => {
+      clientesData = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+      clientesLoaded = true;
+      renderClientes();
+      updateClienteOptions();
+    },
+    (err) => {}
   );
 }
 
@@ -390,7 +464,9 @@ function getClients() {
 }
 
 function updateZonaOptions() {
-  const zonas = Array.from(new Set(debts.map(d => (d.zona || "").trim()).filter(Boolean))).sort();
+  const fromDebts = debts.map(d => (d.zona || "").trim());
+  const fromClientes = clientesData.map(c => (c.zona || "").trim());
+  const zonas = Array.from(new Set([...fromDebts, ...fromClientes].filter(Boolean))).sort();
 
   const datalist = document.getElementById("zonaOptions");
   datalist.innerHTML = zonas.map(z => `<option value="${escapeHtml(z)}"></option>`).join("");
@@ -404,12 +480,10 @@ function updateZonaOptions() {
 
 function getClienteDirectory() {
   const map = new Map();
-  for (const d of debts) {
-    const key = (d.cliente || "").trim().toLowerCase();
+  for (const c of clientesData) {
+    const key = (c.nombre || "").trim().toLowerCase();
     if (!key) continue;
-    if (!map.has(key) || d.fechaEntrega >= map.get(key).fechaEntrega) {
-      map.set(key, d);
-    }
+    map.set(key, { cliente: c.nombre, zona: c.zona, telefono: c.telefono, id: c.id });
   }
   return map;
 }
@@ -420,6 +494,125 @@ function updateClienteOptions() {
   const names = Array.from(dir.values()).map(d => d.cliente).sort();
   datalist.innerHTML = names.map(n => `<option value="${escapeHtml(n)}"></option>`).join("");
 }
+
+const tabDeudas = document.getElementById("tabDeudas");
+const tabClientes = document.getElementById("tabClientes");
+const viewDeudas = document.getElementById("viewDeudas");
+const viewClientes = document.getElementById("viewClientes");
+const fabBtnEl = document.getElementById("fabBtn");
+const fabClienteBtnEl = document.getElementById("fabClienteBtn");
+
+tabDeudas.addEventListener("click", () => {
+  tabDeudas.classList.add("active");
+  tabClientes.classList.remove("active");
+  viewDeudas.style.display = "block";
+  viewClientes.style.display = "none";
+  fabBtnEl.style.display = "flex";
+  fabClienteBtnEl.style.display = "none";
+});
+tabClientes.addEventListener("click", () => {
+  tabClientes.classList.add("active");
+  tabDeudas.classList.remove("active");
+  viewClientes.style.display = "block";
+  viewDeudas.style.display = "none";
+  fabClienteBtnEl.style.display = "flex";
+  fabBtnEl.style.display = "none";
+  renderClientes();
+});
+
+document.getElementById("clienteSearchInput").addEventListener("input", renderClientes);
+
+function renderClientes() {
+  const listEl = document.getElementById("clientesList");
+  if (!listEl) return;
+  if (!clientesLoaded) {
+    listEl.innerHTML = `<div class="empty-msg">Sincronizando datos...</div>`;
+    return;
+  }
+  const query = (document.getElementById("clienteSearchInput").value || "").toLowerCase();
+  const filtered = clientesData
+    .filter(c => !query || (c.nombre || "").toLowerCase().includes(query))
+    .sort((a, b) => (a.nombre || "").localeCompare(b.nombre || ""));
+
+  if (filtered.length === 0) {
+    listEl.innerHTML = `<div class="empty-msg">${clientesData.length === 0 ? "Todavía no diste de alta ningún cliente. Tocá + para agregar el primero." : "No hay clientes que coincidan con la búsqueda."}</div>`;
+    return;
+  }
+
+  listEl.innerHTML = filtered.map(c => {
+    const saldo = debts
+      .filter(d => (d.cliente || "").trim().toLowerCase() === (c.nombre || "").trim().toLowerCase() && d.estado !== "cobrado")
+      .reduce((s, d) => s + Number(d.monto || 0), 0);
+    return `<div class="cliente-row">
+      <div class="cliente-info" onclick="openEditCliente('${escapeAttr(c.id)}')" style="cursor:pointer;">
+        <div class="cliente-nombre">${escapeHtml(c.nombre)}</div>
+        <div class="cliente-meta">${c.zona ? "📍 " + escapeHtml(c.zona) : "Sin zona"}${c.telefono ? " · " + escapeHtml(c.telefono) : ""}</div>
+      </div>
+      <div class="cliente-actions">
+        <span class="num" style="font-weight:700; font-size:13px; color:${saldo > 0 ? '#1E293B' : '#12894F'};">${money(saldo)}</span>
+        ${c.telefono ? `<a class="wa-btn" href="${waLink(c.telefono)}" target="_blank">💬</a>` : ""}
+      </div>
+    </div>`;
+  }).join("");
+}
+
+function openNewCliente() {
+  editingClienteId = null;
+  document.getElementById("clienteModalTitle").textContent = "Nuevo cliente";
+  document.getElementById("c_nombre").value = "";
+  document.getElementById("c_zona").value = "";
+  document.getElementById("c_telefono").value = "";
+  document.getElementById("clienteFormError").style.display = "none";
+  document.getElementById("deleteClienteBtn").style.display = "none";
+  document.getElementById("clienteModalOverlay").style.display = "flex";
+}
+
+function openEditCliente(id) {
+  const c = clientesData.find(x => x.id === id);
+  if (!c) return;
+  editingClienteId = id;
+  document.getElementById("clienteModalTitle").textContent = "Editar cliente";
+  document.getElementById("c_nombre").value = c.nombre || "";
+  document.getElementById("c_zona").value = c.zona || "";
+  document.getElementById("c_telefono").value = c.telefono || "";
+  document.getElementById("clienteFormError").style.display = "none";
+  document.getElementById("deleteClienteBtn").style.display = "block";
+  document.getElementById("clienteModalOverlay").style.display = "flex";
+}
+
+const clienteModalOverlay = document.getElementById("clienteModalOverlay");
+fabClienteBtnEl.addEventListener("click", openNewCliente);
+document.getElementById("closeClienteModalBtn").addEventListener("click", () => { clienteModalOverlay.style.display = "none"; });
+clienteModalOverlay.addEventListener("click", (e) => { if (e.target === clienteModalOverlay) clienteModalOverlay.style.display = "none"; });
+
+document.getElementById("saveClienteBtn").addEventListener("click", () => {
+  const nombre = document.getElementById("c_nombre").value.trim();
+  const zona = document.getElementById("c_zona").value.trim();
+  const telefono = document.getElementById("c_telefono").value.trim();
+  const errEl = document.getElementById("clienteFormError");
+
+  if (!nombre) { errEl.textContent = "Falta el nombre del cliente."; errEl.style.display = "block"; return; }
+
+  const dup = clientesData.find(c => c.nombre.trim().toLowerCase() === nombre.toLowerCase() && c.id !== editingClienteId);
+  if (dup) { errEl.textContent = "Ya existe un cliente con ese nombre."; errEl.style.display = "block"; return; }
+
+  errEl.style.display = "none";
+  const data = { nombre, zona, telefono };
+  const promise = editingClienteId
+    ? db.collection(CLIENTES_COLLECTION).doc(editingClienteId).update(data)
+    : db.collection(CLIENTES_COLLECTION).add(data);
+
+  promise.catch(() => alert("No se pudo guardar. Revisá tu conexión."));
+  clienteModalOverlay.style.display = "none";
+});
+
+document.getElementById("deleteClienteBtn").addEventListener("click", () => {
+  if (!editingClienteId) return;
+  if (!confirm("¿Eliminar este cliente? Las deudas ya cargadas con su nombre no se borran.")) return;
+  db.collection(CLIENTES_COLLECTION).doc(editingClienteId).delete()
+    .catch(() => alert("No se pudo eliminar. Revisá tu conexión."));
+  clienteModalOverlay.style.display = "none";
+});
 
 function render() {
   updateZonaOptions();
@@ -580,6 +773,13 @@ document.getElementById("saveDebtBtn").addEventListener("click", () => {
   if (!fechaLimite) { errEl.textContent = "Falta la fecha límite de pago."; errEl.style.display = "block"; return; }
 
   errEl.style.display = "none";
+
+  const dirNow = getClienteDirectory();
+  const existing = dirNow.get(cliente.toLowerCase());
+  if (!existing) {
+    db.collection(CLIENTES_COLLECTION).add({ nombre: cliente, zona, telefono }).catch(() => {});
+  }
+
   db.collection(DEBTS_COLLECTION).add({ cliente, zona, telefono, monto, fechaEntrega, fechaLimite, detalle, estado: "pendiente" })
     .catch(() => alert("No se pudo guardar. Revisá tu conexión a internet."));
 
