@@ -323,6 +323,17 @@
       <label>Monto pagado ahora *</label>
       <input id="pagoMonto" type="number" placeholder="0">
     </div>
+    <div class="field">
+      <label>Forma de pago</label>
+      <select id="pagoForma">
+        <option value="Efectivo">Efectivo</option>
+        <option value="Transferencia">Transferencia</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>Observación (opcional)</label>
+      <input id="pagoObservacion" placeholder="Ej: pagó con Boni en el local">
+    </div>
     <div class="err-msg" id="pagoFormError" style="display:none;"></div>
     <div style="font-size:11px; color:#94A3B8; margin-bottom:10px;">Si el monto es mayor al saldo, el excedente queda registrado como saldo a favor del cliente.</div>
     <button class="save-btn" id="savePagoBtn">Registrar pago</button>
@@ -336,6 +347,18 @@
       <button class="close-btn" id="closeStatementModalBtn">✕</button>
     </div>
     <div id="statementBody"></div>
+    <div style="display:flex; gap:8px; margin:12px 0; align-items:flex-end;">
+      <div class="field" style="margin-bottom:0; flex:1;">
+        <label>Desde</label>
+        <input id="statementDesde" type="date">
+      </div>
+      <div class="field" style="margin-bottom:0; flex:1;">
+        <label>Hasta</label>
+        <input id="statementHasta" type="date">
+      </div>
+      <button id="statementResetBtn" style="padding:10px 12px; border-radius:8px; border:1px solid #E2E8F0; background:#F8FAFC; color:#475569; font-size:12px; font-weight:600; height:39px;">Todo</button>
+    </div>
+    <div id="statementTableWrap"></div>
     <div style="display:flex; gap:8px; margin-top:14px;">
       <button id="statementPdfBtn" style="flex:1; padding:11px; border-radius:10px; background:#16233A; color:#fff; border:none; font-weight:700; font-size:13px;">📄 Descargar PDF</button>
       <button id="statementWaBtn" style="flex:1; padding:11px; border-radius:10px; background:#12894F; color:#fff; border:none; font-weight:700; font-size:13px;">💬 Enviar por WhatsApp</button>
@@ -378,6 +401,10 @@ const STATUS_META = {
 
 function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
 function todayISO() { return new Date().toISOString().slice(0, 10); }
+function nowTime() {
+  const d = new Date();
+  return String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0");
+}
 function daysDiff(dateISO) {
   const d = new Date(dateISO + "T00:00:00");
   const t = new Date(todayISO() + "T00:00:00");
@@ -423,6 +450,7 @@ let clientesData = [];
 let expandedClient = null;
 let dataLoaded = false;
 let clientesLoaded = false;
+let alertsExpanded = false;
 let editingClienteId = null;
 
 let listenerRetryScheduled = false;
@@ -613,78 +641,140 @@ function renderClientes() {
   }).join("");
 }
 
-function openEstadoCuenta(clienteId) {
+function getMovimientosCliente(nombreCliente) {
+  const misDeudas = debts.filter(d => (d.cliente || "").trim().toLowerCase() === (nombreCliente || "").trim().toLowerCase());
+  const movimientos = [];
+  misDeudas.forEach(d => {
+    movimientos.push({
+      tipo: "cargo",
+      fecha: d.fechaEntrega,
+      hora: "",
+      detalle: d.detalle || "Pedido",
+      formaPago: "",
+      observacion: "",
+      monto: Number(d.monto || 0),
+    });
+    (d.pagos || []).forEach(p => {
+      movimientos.push({
+        tipo: "pago",
+        fecha: p.fecha,
+        hora: p.hora || "",
+        detalle: "Pago",
+        formaPago: p.formaPago || "",
+        observacion: p.observacion || "",
+        monto: -Number(p.monto || 0),
+      });
+    });
+  });
+  movimientos.sort((a, b) => {
+    const da = a.fecha + " " + (a.hora || "00:00");
+    const db_ = b.fecha + " " + (b.hora || "00:00");
+    return da < db_ ? -1 : da > db_ ? 1 : 0;
+  });
+  let running = 0;
+  movimientos.forEach(m => { running += m.monto; m.saldoCorriente = running; });
+  return movimientos;
+}
+
+function buildMovRow(m) {
+  const esCargo = m.tipo === "cargo";
+  return `<tr>
+    <td>${fmtDate(m.fecha)}</td>
+    <td>${m.hora || "-"}</td>
+    <td>${esCargo ? "Cargo" : "Pago"}</td>
+    <td>${escapeHtml(m.detalle || "-")}${m.observacion ? `<br><span style="color:#94A3B8; font-size:11px;">${escapeHtml(m.observacion)}</span>` : ""}</td>
+    <td>${escapeHtml(m.formaPago || "-")}</td>
+    <td style="color:${esCargo ? '#B42318' : '#12894F'}; font-weight:600;">${esCargo ? "+" : "-"}${money(Math.abs(m.monto))}</td>
+    <td style="font-weight:700;">${m.saldoCorriente < 0 ? "A favor " : ""}${money(Math.abs(m.saldoCorriente))}</td>
+  </tr>`;
+}
+
+function renderStatementTable(clienteId) {
   const cli = clientesData.find(c => c.id === clienteId);
   if (!cli) return;
+  const desde = document.getElementById("statementDesde").value;
+  const hasta = document.getElementById("statementHasta").value;
 
-  const misDeudas = debts
-    .filter(d => (d.cliente || "").trim().toLowerCase() === (cli.nombre || "").trim().toLowerCase())
-    .sort((a, b) => a.fechaEntrega < b.fechaEntrega ? 1 : -1);
+  const todos = getMovimientosCliente(cli.nombre);
+  const filtrados = todos.filter(m => (!desde || m.fecha >= desde) && (!hasta || m.fecha <= hasta));
 
-  const totalSaldo = misDeudas.reduce((s, d) => s + saldoOf(d), 0);
-  const hoy = fmtDate(todayISO());
+  const headerRow = `<tr style="background:#F8FAFC;">
+    <th style="text-align:left; padding:6px 8px;">Fecha</th>
+    <th style="text-align:left; padding:6px 8px;">Hora</th>
+    <th style="text-align:left; padding:6px 8px;">Tipo</th>
+    <th style="text-align:left; padding:6px 8px;">Detalle</th>
+    <th style="text-align:left; padding:6px 8px;">Forma de pago</th>
+    <th style="text-align:left; padding:6px 8px;">Monto</th>
+    <th style="text-align:left; padding:6px 8px;">Saldo</th>
+  </tr>`;
+  const filas = filtrados.map(buildMovRow).join("") || `<tr><td colspan="7" style="padding:12px; color:#94A3B8; text-align:center;">Sin movimientos en este período</td></tr>`;
 
-  const filasHtml = misDeudas.map(d => {
-    const ds = STATUS_META[statusOf(d)];
-    const saldo = saldoOf(d);
-    return `<tr>
-      <td>${fmtDate(d.fechaEntrega)}</td>
-      <td>${escapeHtml(d.detalle || "-")}</td>
-      <td>${money(d.monto)}</td>
-      <td>${money(montoCobradoOf(d))}</td>
-      <td style="font-weight:700;">${saldo < 0 ? "A favor " : ""}${money(Math.abs(saldo))}</td>
-      <td><span class="badge" style="background:${ds.bg};color:${ds.fg};">${ds.label}</span></td>
-    </tr>`;
-  }).join("");
-
-  const totalLabel = totalSaldo < 0 ? `A favor ${money(Math.abs(totalSaldo))}` : money(totalSaldo);
-  const totalColor = totalSaldo > 0 ? "#1E293B" : totalSaldo < 0 ? "#7C3AED" : "#12894F";
-
-  document.getElementById("statementBody").innerHTML = `
-    <div style="margin-bottom:12px;">
-      <div style="font-weight:700; font-size:16px;">${escapeHtml(cli.nombre)}</div>
-      <div style="font-size:12px; color:#94A3B8;">${cli.zona ? "📍 " + escapeHtml(cli.zona) : ""}${cli.telefono ? " · " + escapeHtml(cli.telefono) : ""}</div>
-      <div style="font-size:13px; margin-top:8px;">Saldo total: <span style="font-weight:700; color:${totalColor};">${totalLabel}</span></div>
-    </div>
+  document.getElementById("statementTableWrap").innerHTML = `
     <div style="max-height:280px; overflow-y:auto; border:1px solid #F1F5F9; border-radius:8px;">
       <table style="width:100%; border-collapse:collapse; font-size:12px;">
-        <thead><tr style="background:#F8FAFC;">
-          <th style="text-align:left; padding:6px 8px;">Fecha</th>
-          <th style="text-align:left; padding:6px 8px;">Detalle</th>
-          <th style="text-align:left; padding:6px 8px;">Monto</th>
-          <th style="text-align:left; padding:6px 8px;">Pagado</th>
-          <th style="text-align:left; padding:6px 8px;">Saldo</th>
-          <th style="text-align:left; padding:6px 8px;">Estado</th>
-        </tr></thead>
-        <tbody>${filasHtml || `<tr><td colspan="6" style="padding:12px; color:#94A3B8; text-align:center;">Sin deudas cargadas</td></tr>`}</tbody>
+        <thead>${headerRow}</thead>
+        <tbody>${filas}</tbody>
       </table>
     </div>
   `;
+
+  const hoy = fmtDate(todayISO());
+  const rangoTexto = desde || hasta
+    ? `Movimientos del ${desde ? fmtDate(desde) : "inicio"} al ${hasta ? fmtDate(hasta) : "hoy"}`
+    : "Historial completo";
 
   document.getElementById("printArea").innerHTML = `
     <div style="font-family: Arial, sans-serif; color:#1E293B;">
       <div style="font-size:11px; letter-spacing:1px; text-transform:uppercase; color:#64748B;">Bermejo Distribuciones</div>
       <h2 style="margin:4px 0 2px;">Estado de cuenta</h2>
-      <div style="font-size:12px; color:#64748B; margin-bottom:14px;">Generado el ${hoy}</div>
+      <div style="font-size:12px; color:#64748B; margin-bottom:4px;">Generado el ${hoy}</div>
+      <div style="font-size:12px; color:#64748B; margin-bottom:14px;">${rangoTexto}</div>
       <div style="font-weight:700; font-size:15px;">${escapeHtml(cli.nombre)}</div>
       <div style="font-size:12px; color:#64748B; margin-bottom:14px;">${cli.zona ? "Zona: " + escapeHtml(cli.zona) : ""}${cli.telefono ? " · Tel: " + escapeHtml(cli.telefono) : ""}</div>
       <table>
-        <thead><tr>
-          <th>Fecha</th><th>Detalle</th><th>Monto</th><th>Pagado</th><th>Saldo</th><th>Estado</th>
-        </tr></thead>
-        <tbody>${filasHtml || `<tr><td colspan="6">Sin deudas cargadas</td></tr>`}</tbody>
+        <thead>${headerRow}</thead>
+        <tbody>${filas}</tbody>
       </table>
-      <div style="margin-top:16px; font-size:14px; font-weight:700;">Saldo total: ${totalLabel}</div>
+      <div style="margin-top:16px; font-size:14px; font-weight:700;">Saldo al final del período: ${filtrados.length ? (filtrados[filtrados.length - 1].saldoCorriente < 0 ? "A favor " + money(Math.abs(filtrados[filtrados.length - 1].saldoCorriente)) : money(filtrados[filtrados.length - 1].saldoCorriente)) : money(0)}</div>
+    </div>
+  `;
+}
+
+function openEstadoCuenta(clienteId) {
+  const cli = clientesData.find(c => c.id === clienteId);
+  if (!cli) return;
+
+  const todosMovimientos = getMovimientosCliente(cli.nombre);
+  const totalSaldo = todosMovimientos.length ? todosMovimientos[todosMovimientos.length - 1].saldoCorriente : 0;
+  const totalLabel = totalSaldo < 0 ? `A favor ${money(Math.abs(totalSaldo))}` : money(totalSaldo);
+  const totalColor = totalSaldo > 0 ? "#1E293B" : totalSaldo < 0 ? "#7C3AED" : "#12894F";
+
+  document.getElementById("statementBody").innerHTML = `
+    <div style="margin-bottom:4px;">
+      <div style="font-weight:700; font-size:16px;">${escapeHtml(cli.nombre)}</div>
+      <div style="font-size:12px; color:#94A3B8;">${cli.zona ? "📍 " + escapeHtml(cli.zona) : ""}${cli.telefono ? " · " + escapeHtml(cli.telefono) : ""}</div>
+      <div style="font-size:13px; margin-top:8px;">Saldo total: <span style="font-weight:700; color:${totalColor};">${totalLabel}</span></div>
     </div>
   `;
 
+  document.getElementById("statementDesde").value = "";
+  document.getElementById("statementHasta").value = "";
   document.getElementById("statementModalOverlay").dataset.clienteId = clienteId;
+  renderStatementTable(clienteId);
   document.getElementById("statementModalOverlay").style.display = "flex";
 }
 
 const statementModalOverlay = document.getElementById("statementModalOverlay");
 document.getElementById("closeStatementModalBtn").addEventListener("click", () => { statementModalOverlay.style.display = "none"; });
 statementModalOverlay.addEventListener("click", (e) => { if (e.target === statementModalOverlay) statementModalOverlay.style.display = "none"; });
+
+document.getElementById("statementDesde").addEventListener("change", () => renderStatementTable(statementModalOverlay.dataset.clienteId));
+document.getElementById("statementHasta").addEventListener("change", () => renderStatementTable(statementModalOverlay.dataset.clienteId));
+document.getElementById("statementResetBtn").addEventListener("click", () => {
+  document.getElementById("statementDesde").value = "";
+  document.getElementById("statementHasta").value = "";
+  renderStatementTable(statementModalOverlay.dataset.clienteId);
+});
 
 document.getElementById("statementPdfBtn").addEventListener("click", () => {
   window.print();
@@ -694,8 +784,8 @@ document.getElementById("statementWaBtn").addEventListener("click", () => {
   const clienteId = statementModalOverlay.dataset.clienteId;
   const cli = clientesData.find(c => c.id === clienteId);
   if (!cli) return;
-  const misDeudas = debts.filter(d => (d.cliente || "").trim().toLowerCase() === (cli.nombre || "").trim().toLowerCase());
-  const totalSaldo = misDeudas.reduce((s, d) => s + saldoOf(d), 0);
+  const movimientos = getMovimientosCliente(cli.nombre);
+  const totalSaldo = movimientos.length ? movimientos[movimientos.length - 1].saldoCorriente : 0;
   const hoy = fmtDate(todayISO());
   let texto;
   if (totalSaldo > 0) {
@@ -746,6 +836,8 @@ pagoModalOverlay.addEventListener("click", (e) => { if (e.target === pagoModalOv
 
 document.getElementById("savePagoBtn").addEventListener("click", () => {
   const monto = Number(document.getElementById("pagoMonto").value);
+  const formaPago = document.getElementById("pagoForma").value;
+  const observacion = document.getElementById("pagoObservacion").value.trim();
   const errEl = document.getElementById("pagoFormError");
   if (!monto || monto <= 0) {
     errEl.textContent = "Ingresá un monto válido.";
@@ -755,7 +847,7 @@ document.getElementById("savePagoBtn").addEventListener("click", () => {
   errEl.style.display = "none";
   db.collection(DEBTS_COLLECTION).doc(pagoDebtId).update({
     montoCobrado: firebase.firestore.FieldValue.increment(monto),
-    pagos: firebase.firestore.FieldValue.arrayUnion({ fecha: todayISO(), monto })
+    pagos: firebase.firestore.FieldValue.arrayUnion({ fecha: todayISO(), hora: nowTime(), monto, formaPago, observacion })
   }).catch(() => alert("No se pudo registrar el pago. Revisá tu conexión."));
   pagoModalOverlay.style.display = "none";
 });
@@ -808,7 +900,8 @@ function render() {
   if (alertsToday.length > 0) {
     ticket.style.display = "block";
     document.getElementById("ticketCount").textContent = `Para cobrar hoy (${alertsToday.length})`;
-    alertsList.innerHTML = alertsToday.slice(0, 6).map(d => {
+    const visibles = alertsExpanded ? alertsToday : alertsToday.slice(0, 6);
+    alertsList.innerHTML = visibles.map(d => {
       const s = STATUS_META[statusOf(d)];
       const dd = daysDiff(d.fechaLimite);
       const sub = dd > 0 ? `Vencida hace ${dd} día${dd === 1 ? "" : "s"}` : dd === 0 ? "Vence hoy" : `Vence en ${-dd} día${-dd === 1 ? "" : "s"}`;
@@ -823,6 +916,13 @@ function render() {
         </div>
       </div>`;
     }).join("");
+    if (alertsToday.length > 6) {
+      alertsList.innerHTML += `<div style="text-align:center; margin-top:8px;">
+        <a href="#" onclick="alertsExpanded = ${!alertsExpanded}; render(); return false;" style="color:#1D4ED8; font-weight:600; font-size:12px;">
+          ${alertsExpanded ? "Ver menos" : `Ver todas (${alertsToday.length})`}
+        </a>
+      </div>`;
+    }
   } else {
     ticket.style.display = "none";
   }
@@ -914,6 +1014,8 @@ function openPagoModal(id) {
   const saldo = saldoOf(d);
   document.getElementById("pagoSaldoActual").textContent = `Saldo actual: ${money(saldo)} (de ${money(d.monto)} total)`;
   document.getElementById("pagoMonto").value = "";
+  document.getElementById("pagoForma").value = "Efectivo";
+  document.getElementById("pagoObservacion").value = "";
   document.getElementById("pagoFormError").style.display = "none";
   document.getElementById("pagoModalOverlay").style.display = "flex";
 }
@@ -926,7 +1028,7 @@ function marcarTodoPagado(id) {
   if (!confirm(`¿Marcar como pagado el saldo completo de ${money(saldo)}?`)) return;
   db.collection(DEBTS_COLLECTION).doc(id).update({
     montoCobrado: firebase.firestore.FieldValue.increment(saldo),
-    pagos: firebase.firestore.FieldValue.arrayUnion({ fecha: todayISO(), monto: saldo })
+    pagos: firebase.firestore.FieldValue.arrayUnion({ fecha: todayISO(), hora: nowTime(), monto: saldo, formaPago: "Efectivo", observacion: "Pago total" })
   }).catch(() => alert("No se pudo actualizar. Revisá tu conexión."));
 }
 
