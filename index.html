@@ -144,6 +144,15 @@
   .cliente-nombre { font-weight: 700; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .cliente-meta { color: #94A3B8; font-size: 11px; margin-top: 2px; }
   .cliente-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+
+  #printArea { display: none; }
+  @media print {
+    body * { visibility: hidden; }
+    #printArea, #printArea * { visibility: visible; }
+    #printArea { display: block; position: absolute; top: 0; left: 0; width: 100%; padding: 24px; }
+    #printArea table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    #printArea th, #printArea td { text-align: left; padding: 6px 4px; border-bottom: 1px solid #ddd; }
+  }
 </style>
 </head>
 <body>
@@ -180,11 +189,6 @@
       <div class="total-label">Deuda total pendiente</div>
       <div class="total-value num" id="totalPendiente">$0</div>
     </div>
-  </div>
-  <div style="display:flex; gap:8px; margin-top:12px;">
-    <button id="exportBtn" style="flex:1; background:#22344F; color:#DCE6F5; border:1px solid #2E4364; border-radius:8px; padding:8px 10px; font-size:12px; font-weight:600;">⬇ Exportar backup (Excel)</button>
-    <button id="importBtn" style="flex:1; background:#22344F; color:#DCE6F5; border:1px solid #2E4364; border-radius:8px; padding:8px 10px; font-size:12px; font-weight:600;">⬆ Restaurar backup</button>
-    <input type="file" id="importFile" accept=".csv" style="display:none;">
   </div>
   <button id="logoutBtn" style="margin-top:8px; width:100%; background:transparent; border:none; color:#5B7396; font-size:11px; text-decoration:underline;">Cerrar sesión</button>
 </header>
@@ -242,10 +246,10 @@
       <button class="close-btn" id="closeModalBtn">✕</button>
     </div>
 
-    <div class="field">
+    <div class="field" style="position:relative;">
       <label>Cliente *</label>
-      <input id="f_cliente" list="clienteOptions" placeholder="Nombre del negocio o persona">
-      <datalist id="clienteOptions"></datalist>
+      <input id="f_cliente" placeholder="Buscá un cliente o escribí uno nuevo" autocomplete="off">
+      <div id="clienteDropdown" style="display:none; position:absolute; top:100%; left:0; right:0; background:#fff; border:1px solid #E2E8F0; border-radius:8px; margin-top:4px; max-height:180px; overflow-y:auto; z-index:60; box-shadow:0 4px 12px rgba(0,0,0,0.12);"></div>
     </div>
     <div class="field-row">
       <div class="field">
@@ -307,6 +311,40 @@
     <button id="deleteClienteBtn" style="display:none; width:100%; margin-top:8px; padding:10px; border-radius:10px; background:#FEE4E2; color:#B42318; border:none; font-weight:600; font-size:13px;">Eliminar cliente</button>
   </div>
 </div>
+
+<div class="modal-overlay" id="pagoModalOverlay">
+  <div class="modal-sheet">
+    <div class="modal-head">
+      <div class="modal-title">Registrar pago</div>
+      <button class="close-btn" id="closePagoModalBtn">✕</button>
+    </div>
+    <div id="pagoSaldoActual" style="font-size:13px; color:#64748B; margin-bottom:12px;"></div>
+    <div class="field">
+      <label>Monto pagado ahora *</label>
+      <input id="pagoMonto" type="number" placeholder="0">
+    </div>
+    <div class="err-msg" id="pagoFormError" style="display:none;"></div>
+    <div style="font-size:11px; color:#94A3B8; margin-bottom:10px;">Si el monto es mayor al saldo, el excedente queda registrado como saldo a favor del cliente.</div>
+    <button class="save-btn" id="savePagoBtn">Registrar pago</button>
+  </div>
+</div>
+
+<div class="modal-overlay" id="statementModalOverlay">
+  <div class="modal-sheet" style="max-width:520px;">
+    <div class="modal-head">
+      <div class="modal-title">Estado de cuenta</div>
+      <button class="close-btn" id="closeStatementModalBtn">✕</button>
+    </div>
+    <div id="statementBody"></div>
+    <div style="display:flex; gap:8px; margin-top:14px;">
+      <button id="statementPdfBtn" style="flex:1; padding:11px; border-radius:10px; background:#16233A; color:#fff; border:none; font-weight:700; font-size:13px;">📄 Descargar PDF</button>
+      <button id="statementWaBtn" style="flex:1; padding:11px; border-radius:10px; background:#12894F; color:#fff; border:none; font-weight:700; font-size:13px;">💬 Enviar por WhatsApp</button>
+    </div>
+    <div style="font-size:11px; color:#94A3B8; margin-top:8px;">WhatsApp no permite adjuntar el PDF solo: se abre el chat con un resumen en texto, y adjuntás el PDF descargado a mano.</div>
+  </div>
+</div>
+
+<div id="printArea"></div>
 </div>
 
 <script>
@@ -335,6 +373,7 @@ const STATUS_META = {
   porVencer:  { label: "Por vencer", fg: "#B54708", bg: "#FEF0C7", dot: "#D97706" },
   alDia:      { label: "Al día",     fg: "#175CD3", bg: "#EFF4FF", dot: "#2970FF" },
   cobrado:    { label: "Cobrado",    fg: "#087443", bg: "#E7F6EC", dot: "#12894F" },
+  aFavor:     { label: "A favor",    fg: "#6D28D9", bg: "#EDE9FE", dot: "#7C3AED" },
 };
 
 function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
@@ -354,8 +393,17 @@ function waLink(phone) {
   const clean = (phone || "").replace(/[^0-9]/g, "");
   return `https://wa.me/${clean}`;
 }
+function montoCobradoOf(d) {
+  if (typeof d.montoCobrado === "number") return d.montoCobrado;
+  return d.estado === "cobrado" ? Number(d.monto || 0) : 0;
+}
+function saldoOf(d) {
+  return Number(d.monto || 0) - montoCobradoOf(d);
+}
 function statusOf(debt) {
-  if (debt.estado === "cobrado") return "cobrado";
+  const saldo = saldoOf(debt);
+  if (saldo < 0) return "aFavor";
+  if (saldo === 0) return "cobrado";
   const dd = daysDiff(debt.fechaLimite);
   if (dd > 0) return "vencido";
   if (dd >= -2) return "porVencer";
@@ -377,6 +425,16 @@ let dataLoaded = false;
 let clientesLoaded = false;
 let editingClienteId = null;
 
+let listenerRetryScheduled = false;
+function scheduleListenerRetry() {
+  if (listenerRetryScheduled) return;
+  listenerRetryScheduled = true;
+  setTimeout(() => {
+    listenerRetryScheduled = false;
+    attachListener();
+  }, 4000);
+}
+
 function attachListener() {
   db.collection(DEBTS_COLLECTION).onSnapshot(
     (snapshot) => {
@@ -387,6 +445,7 @@ function attachListener() {
     },
     (err) => {
       setSyncStatus(false);
+      scheduleListenerRetry();
     }
   );
   db.collection(CLIENTES_COLLECTION).onSnapshot(
@@ -394,9 +453,10 @@ function attachListener() {
       clientesData = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
       clientesLoaded = true;
       renderClientes();
-      updateClienteOptions();
     },
-    (err) => {}
+    (err) => {
+      scheduleListenerRetry();
+    }
   );
 }
 
@@ -455,10 +515,11 @@ function getClients() {
     c.telefono = d.telefono || c.telefono;
   }
   return Array.from(map.values()).map(c => {
-    const saldoPendiente = c.debts.filter(d => d.estado !== "cobrado").reduce((s, d) => s + Number(d.monto || 0), 0);
+    const saldoPendiente = c.debts.reduce((s, d) => s + saldoOf(d), 0);
+    const allResolved = c.debts.every(d => statusOf(d) === "cobrado" || statusOf(d) === "aFavor");
     const peorEstado = c.debts.some(d => statusOf(d) === "vencido") ? "vencido"
       : c.debts.some(d => statusOf(d) === "porVencer") ? "porVencer"
-      : c.debts.every(d => statusOf(d) === "cobrado") ? "cobrado" : "alDia";
+      : allResolved ? (c.debts.some(d => statusOf(d) === "aFavor") ? "aFavor" : "cobrado") : "alDia";
     return { ...c, saldoPendiente, peorEstado };
   });
 }
@@ -488,12 +549,7 @@ function getClienteDirectory() {
   return map;
 }
 
-function updateClienteOptions() {
-  const dir = getClienteDirectory();
-  const datalist = document.getElementById("clienteOptions");
-  const names = Array.from(dir.values()).map(d => d.cliente).sort();
-  datalist.innerHTML = names.map(n => `<option value="${escapeHtml(n)}"></option>`).join("");
-}
+// (el buscador de clientes ahora usa un desplegable propio, ver renderClienteDropdown)
 
 const tabDeudas = document.getElementById("tabDeudas");
 const tabClientes = document.getElementById("tabClientes");
@@ -526,7 +582,7 @@ function renderClientes() {
   const listEl = document.getElementById("clientesList");
   if (!listEl) return;
   if (!clientesLoaded) {
-    listEl.innerHTML = `<div class="empty-msg">Sincronizando datos...</div>`;
+    listEl.innerHTML = `<div class="empty-msg">Sincronizando datos...<br><br><a href="#" onclick="attachListener(); return false;" style="color:#1D4ED8; font-weight:600;">¿Tarda mucho? Tocá para reintentar</a></div>`;
     return;
   }
   const query = (document.getElementById("clienteSearchInput").value || "").toLowerCase();
@@ -541,20 +597,119 @@ function renderClientes() {
 
   listEl.innerHTML = filtered.map(c => {
     const saldo = debts
-      .filter(d => (d.cliente || "").trim().toLowerCase() === (c.nombre || "").trim().toLowerCase() && d.estado !== "cobrado")
-      .reduce((s, d) => s + Number(d.monto || 0), 0);
+      .filter(d => (d.cliente || "").trim().toLowerCase() === (c.nombre || "").trim().toLowerCase())
+      .reduce((s, d) => s + saldoOf(d), 0);
     return `<div class="cliente-row">
-      <div class="cliente-info" onclick="openEditCliente('${escapeAttr(c.id)}')" style="cursor:pointer;">
+      <div class="cliente-info" onclick="openEstadoCuenta('${escapeAttr(c.id)}')" style="cursor:pointer;">
         <div class="cliente-nombre">${escapeHtml(c.nombre)}</div>
         <div class="cliente-meta">${c.zona ? "📍 " + escapeHtml(c.zona) : "Sin zona"}${c.telefono ? " · " + escapeHtml(c.telefono) : ""}</div>
       </div>
       <div class="cliente-actions">
-        <span class="num" style="font-weight:700; font-size:13px; color:${saldo > 0 ? '#1E293B' : '#12894F'};">${money(saldo)}</span>
+        <span class="num" style="font-weight:700; font-size:13px; color:${saldo > 0 ? '#1E293B' : saldo < 0 ? '#7C3AED' : '#12894F'};">${saldo < 0 ? "A favor " : ""}${money(Math.abs(saldo))}</span>
+        <button class="icon-btn" style="background:#F1F5F9; color:#475569;" onclick="openEditCliente('${escapeAttr(c.id)}')" title="Editar cliente">✏️</button>
         ${c.telefono ? `<a class="wa-btn" href="${waLink(c.telefono)}" target="_blank">💬</a>` : ""}
       </div>
     </div>`;
   }).join("");
 }
+
+function openEstadoCuenta(clienteId) {
+  const cli = clientesData.find(c => c.id === clienteId);
+  if (!cli) return;
+
+  const misDeudas = debts
+    .filter(d => (d.cliente || "").trim().toLowerCase() === (cli.nombre || "").trim().toLowerCase())
+    .sort((a, b) => a.fechaEntrega < b.fechaEntrega ? 1 : -1);
+
+  const totalSaldo = misDeudas.reduce((s, d) => s + saldoOf(d), 0);
+  const hoy = fmtDate(todayISO());
+
+  const filasHtml = misDeudas.map(d => {
+    const ds = STATUS_META[statusOf(d)];
+    const saldo = saldoOf(d);
+    return `<tr>
+      <td>${fmtDate(d.fechaEntrega)}</td>
+      <td>${escapeHtml(d.detalle || "-")}</td>
+      <td>${money(d.monto)}</td>
+      <td>${money(montoCobradoOf(d))}</td>
+      <td style="font-weight:700;">${saldo < 0 ? "A favor " : ""}${money(Math.abs(saldo))}</td>
+      <td><span class="badge" style="background:${ds.bg};color:${ds.fg};">${ds.label}</span></td>
+    </tr>`;
+  }).join("");
+
+  const totalLabel = totalSaldo < 0 ? `A favor ${money(Math.abs(totalSaldo))}` : money(totalSaldo);
+  const totalColor = totalSaldo > 0 ? "#1E293B" : totalSaldo < 0 ? "#7C3AED" : "#12894F";
+
+  document.getElementById("statementBody").innerHTML = `
+    <div style="margin-bottom:12px;">
+      <div style="font-weight:700; font-size:16px;">${escapeHtml(cli.nombre)}</div>
+      <div style="font-size:12px; color:#94A3B8;">${cli.zona ? "📍 " + escapeHtml(cli.zona) : ""}${cli.telefono ? " · " + escapeHtml(cli.telefono) : ""}</div>
+      <div style="font-size:13px; margin-top:8px;">Saldo total: <span style="font-weight:700; color:${totalColor};">${totalLabel}</span></div>
+    </div>
+    <div style="max-height:280px; overflow-y:auto; border:1px solid #F1F5F9; border-radius:8px;">
+      <table style="width:100%; border-collapse:collapse; font-size:12px;">
+        <thead><tr style="background:#F8FAFC;">
+          <th style="text-align:left; padding:6px 8px;">Fecha</th>
+          <th style="text-align:left; padding:6px 8px;">Detalle</th>
+          <th style="text-align:left; padding:6px 8px;">Monto</th>
+          <th style="text-align:left; padding:6px 8px;">Pagado</th>
+          <th style="text-align:left; padding:6px 8px;">Saldo</th>
+          <th style="text-align:left; padding:6px 8px;">Estado</th>
+        </tr></thead>
+        <tbody>${filasHtml || `<tr><td colspan="6" style="padding:12px; color:#94A3B8; text-align:center;">Sin deudas cargadas</td></tr>`}</tbody>
+      </table>
+    </div>
+  `;
+
+  document.getElementById("printArea").innerHTML = `
+    <div style="font-family: Arial, sans-serif; color:#1E293B;">
+      <div style="font-size:11px; letter-spacing:1px; text-transform:uppercase; color:#64748B;">Bermejo Distribuciones</div>
+      <h2 style="margin:4px 0 2px;">Estado de cuenta</h2>
+      <div style="font-size:12px; color:#64748B; margin-bottom:14px;">Generado el ${hoy}</div>
+      <div style="font-weight:700; font-size:15px;">${escapeHtml(cli.nombre)}</div>
+      <div style="font-size:12px; color:#64748B; margin-bottom:14px;">${cli.zona ? "Zona: " + escapeHtml(cli.zona) : ""}${cli.telefono ? " · Tel: " + escapeHtml(cli.telefono) : ""}</div>
+      <table>
+        <thead><tr>
+          <th>Fecha</th><th>Detalle</th><th>Monto</th><th>Pagado</th><th>Saldo</th><th>Estado</th>
+        </tr></thead>
+        <tbody>${filasHtml || `<tr><td colspan="6">Sin deudas cargadas</td></tr>`}</tbody>
+      </table>
+      <div style="margin-top:16px; font-size:14px; font-weight:700;">Saldo total: ${totalLabel}</div>
+    </div>
+  `;
+
+  document.getElementById("statementModalOverlay").dataset.clienteId = clienteId;
+  document.getElementById("statementModalOverlay").style.display = "flex";
+}
+
+const statementModalOverlay = document.getElementById("statementModalOverlay");
+document.getElementById("closeStatementModalBtn").addEventListener("click", () => { statementModalOverlay.style.display = "none"; });
+statementModalOverlay.addEventListener("click", (e) => { if (e.target === statementModalOverlay) statementModalOverlay.style.display = "none"; });
+
+document.getElementById("statementPdfBtn").addEventListener("click", () => {
+  window.print();
+});
+
+document.getElementById("statementWaBtn").addEventListener("click", () => {
+  const clienteId = statementModalOverlay.dataset.clienteId;
+  const cli = clientesData.find(c => c.id === clienteId);
+  if (!cli) return;
+  const misDeudas = debts.filter(d => (d.cliente || "").trim().toLowerCase() === (cli.nombre || "").trim().toLowerCase());
+  const totalSaldo = misDeudas.reduce((s, d) => s + saldoOf(d), 0);
+  const hoy = fmtDate(todayISO());
+  let texto;
+  if (totalSaldo > 0) {
+    texto = `Hola ${cli.nombre}! Te paso tu estado de cuenta con Bermejo Distribuciones al ${hoy}. Saldo pendiente: ${money(totalSaldo)}. Cualquier consulta nos escribís.`;
+  } else if (totalSaldo < 0) {
+    texto = `Hola ${cli.nombre}! Te paso tu estado de cuenta con Bermejo Distribuciones al ${hoy}. Tenés un saldo a favor de ${money(Math.abs(totalSaldo))}. Cualquier consulta nos escribís.`;
+  } else {
+    texto = `Hola ${cli.nombre}! Te paso tu estado de cuenta con Bermejo Distribuciones al ${hoy}. Estás al día, sin saldo pendiente. Cualquier consulta nos escribís.`;
+  }
+  const url = cli.telefono
+    ? `https://wa.me/${(cli.telefono || "").replace(/[^0-9]/g, "")}?text=${encodeURIComponent(texto)}`
+    : `https://wa.me/?text=${encodeURIComponent(texto)}`;
+  window.open(url, "_blank");
+});
 
 function openNewCliente() {
   editingClienteId = null;
@@ -584,6 +739,26 @@ const clienteModalOverlay = document.getElementById("clienteModalOverlay");
 fabClienteBtnEl.addEventListener("click", openNewCliente);
 document.getElementById("closeClienteModalBtn").addEventListener("click", () => { clienteModalOverlay.style.display = "none"; });
 clienteModalOverlay.addEventListener("click", (e) => { if (e.target === clienteModalOverlay) clienteModalOverlay.style.display = "none"; });
+
+const pagoModalOverlay = document.getElementById("pagoModalOverlay");
+document.getElementById("closePagoModalBtn").addEventListener("click", () => { pagoModalOverlay.style.display = "none"; });
+pagoModalOverlay.addEventListener("click", (e) => { if (e.target === pagoModalOverlay) pagoModalOverlay.style.display = "none"; });
+
+document.getElementById("savePagoBtn").addEventListener("click", () => {
+  const monto = Number(document.getElementById("pagoMonto").value);
+  const errEl = document.getElementById("pagoFormError");
+  if (!monto || monto <= 0) {
+    errEl.textContent = "Ingresá un monto válido.";
+    errEl.style.display = "block";
+    return;
+  }
+  errEl.style.display = "none";
+  db.collection(DEBTS_COLLECTION).doc(pagoDebtId).update({
+    montoCobrado: firebase.firestore.FieldValue.increment(monto),
+    pagos: firebase.firestore.FieldValue.arrayUnion({ fecha: todayISO(), monto })
+  }).catch(() => alert("No se pudo registrar el pago. Revisá tu conexión."));
+  pagoModalOverlay.style.display = "none";
+});
 
 document.getElementById("saveClienteBtn").addEventListener("click", () => {
   const nombre = document.getElementById("c_nombre").value.trim();
@@ -616,18 +791,17 @@ document.getElementById("deleteClienteBtn").addEventListener("click", () => {
 
 function render() {
   updateZonaOptions();
-  updateClienteOptions();
   const query = document.getElementById("searchInput").value.toLowerCase();
   const zonaFilter = document.getElementById("zonaFilter").value;
   const estadoFilter = document.getElementById("estadoFilter").value;
 
   const clients = getClients();
 
-  const totalPendiente = debts.filter(d => d.estado !== "cobrado").reduce((s, d) => s + Number(d.monto || 0), 0);
+  const totalPendiente = debts.reduce((s, d) => s + saldoOf(d), 0);
   document.getElementById("totalPendiente").textContent = money(totalPendiente);
 
   // alerts ticket
-  const alertsToday = debts.filter(d => d.estado !== "cobrado" && (statusOf(d) === "vencido" || statusOf(d) === "porVencer"))
+  const alertsToday = debts.filter(d => saldoOf(d) > 0 && (statusOf(d) === "vencido" || statusOf(d) === "porVencer"))
     .sort((a, b) => daysDiff(b.fechaLimite) - daysDiff(a.fechaLimite));
   const ticket = document.getElementById("ticket");
   const alertsList = document.getElementById("alertsList");
@@ -644,7 +818,7 @@ function render() {
           <div class="alert-sub">${sub}</div>
         </div>
         <div style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
-          <span class="num" style="font-weight:700;color:${s.fg};">${money(d.monto)}</span>
+          <span class="num" style="font-weight:700;color:${s.fg};">${money(saldoOf(d))}</span>
           ${d.telefono ? `<a class="wa-btn" href="${waLink(d.telefono)}" target="_blank">💬</a>` : ""}
         </div>
       </div>`;
@@ -665,7 +839,7 @@ function render() {
 
   const listEl = document.getElementById("clientList");
   if (!dataLoaded) {
-    listEl.innerHTML = `<div class="empty-msg">Sincronizando datos...</div>`;
+    listEl.innerHTML = `<div class="empty-msg">Sincronizando datos...<br><br><a href="#" onclick="attachListener(); return false;" style="color:#1D4ED8; font-weight:600;">¿Tarda mucho? Tocá para reintentar</a></div>`;
     return;
   }
   if (filtered.length === 0) {
@@ -678,16 +852,23 @@ function render() {
     const isOpen = expandedClient === c.cliente;
     const debtsHtml = c.debts.sort((a, b) => a.fechaEntrega < b.fechaEntrega ? 1 : -1).map(d => {
       const ds = STATUS_META[statusOf(d)];
+      const saldo = saldoOf(d);
+      const cobrado = montoCobradoOf(d);
+      const pagosCount = (d.pagos || []).length;
       return `<div class="debt-row">
         <div style="min-width:0;">
           <div class="debt-dates">${fmtDate(d.fechaEntrega)} · vence ${fmtDate(d.fechaLimite)}</div>
           <span class="badge" style="background:${ds.bg};color:${ds.fg};">${ds.label}</span>
+          ${cobrado > 0 ? `<div style="font-size:10px; color:#94A3B8; margin-top:2px;">Pagado ${money(cobrado)} de ${money(d.monto)}${pagosCount ? ` · ${pagosCount} pago${pagosCount === 1 ? "" : "s"}` : ""}</div>` : ""}
         </div>
         <div class="debt-actions">
-          <span class="num" style="font-weight:700;font-size:13px;">${money(d.monto)}</span>
-          ${d.estado === "cobrado"
-            ? `<button class="icon-btn" style="background:#E7F6EC;color:#12894F;" onclick="markPendiente('${d.id}')" title="Marcar como pendiente">✓</button>`
-            : `<button class="icon-btn" style="background:#fff;border:1px solid #D0D5DD;color:#475569;" onclick="markCobrado('${d.id}')" title="Marcar como cobrado">✓</button>`}
+          <span class="num" style="font-weight:700;font-size:13px; color:${saldo < 0 ? '#7C3AED' : saldo === 0 ? '#12894F' : '#1E293B'};">${money(Math.abs(saldo))}</span>
+          ${saldo > 0 ? `
+            <button class="icon-btn" style="background:#EFF4FF;color:#175CD3;" onclick="openPagoModal('${d.id}')" title="Registrar pago">💵</button>
+            <button class="icon-btn" style="background:#fff;border:1px solid #D0D5DD;color:#475569;" onclick="marcarTodoPagado('${d.id}')" title="Marcar todo como pagado">✓</button>
+          ` : `
+            ${pagosCount ? `<button class="icon-btn" style="background:#F1F5F9;color:#475569;" onclick="deshacerUltimoPago('${d.id}')" title="Deshacer último pago">↺</button>` : ""}
+          `}
           <button class="icon-btn" style="background:#FEE4E2;color:#B42318;" onclick="removeDebt('${d.id}')" title="Eliminar">🗑</button>
         </div>
       </div>`;
@@ -703,7 +884,7 @@ function render() {
           ${c.zona ? `<div class="client-zona">📍 ${escapeHtml(c.zona)}</div>` : ""}
         </div>
         <div class="client-right">
-          <span class="client-saldo num" style="color:${c.saldoPendiente > 0 ? '#1E293B' : '#12894F'};">${money(c.saldoPendiente)}</span>
+          <span class="client-saldo num" style="color:${c.saldoPendiente > 0 ? '#1E293B' : c.saldoPendiente < 0 ? '#7C3AED' : '#12894F'};">${c.saldoPendiente < 0 ? "A favor " : ""}${money(Math.abs(c.saldoPendiente))}</span>
           <span>${isOpen ? "▲" : "▼"}</span>
         </div>
       </button>
@@ -724,21 +905,75 @@ function toggleClient(cliente) {
   expandedClient = expandedClient === cliente ? null : cliente;
   render();
 }
-function markCobrado(id) {
-  db.collection(DEBTS_COLLECTION).doc(id).update({ estado: "cobrado", fechaCobro: todayISO() })
-    .catch(() => alert("No se pudo actualizar. Revisá tu conexión."));
+let pagoDebtId = null;
+
+function openPagoModal(id) {
+  const d = debts.find(x => x.id === id);
+  if (!d) return;
+  pagoDebtId = id;
+  const saldo = saldoOf(d);
+  document.getElementById("pagoSaldoActual").textContent = `Saldo actual: ${money(saldo)} (de ${money(d.monto)} total)`;
+  document.getElementById("pagoMonto").value = "";
+  document.getElementById("pagoFormError").style.display = "none";
+  document.getElementById("pagoModalOverlay").style.display = "flex";
 }
-function markPendiente(id) {
-  db.collection(DEBTS_COLLECTION).doc(id).update({ estado: "pendiente", fechaCobro: firebase.firestore.FieldValue.delete() })
-    .catch(() => alert("No se pudo actualizar. Revisá tu conexión."));
+
+function marcarTodoPagado(id) {
+  const d = debts.find(x => x.id === id);
+  if (!d) return;
+  const saldo = saldoOf(d);
+  if (saldo <= 0) return;
+  if (!confirm(`¿Marcar como pagado el saldo completo de ${money(saldo)}?`)) return;
+  db.collection(DEBTS_COLLECTION).doc(id).update({
+    montoCobrado: firebase.firestore.FieldValue.increment(saldo),
+    pagos: firebase.firestore.FieldValue.arrayUnion({ fecha: todayISO(), monto: saldo })
+  }).catch(() => alert("No se pudo actualizar. Revisá tu conexión."));
 }
+
+function deshacerUltimoPago(id) {
+  const d = debts.find(x => x.id === id);
+  if (!d || !d.pagos || d.pagos.length === 0) return;
+  const last = d.pagos[d.pagos.length - 1];
+  if (!confirm(`¿Deshacer el último pago de ${money(last.monto)} del ${fmtDate(last.fecha)}?`)) return;
+  db.collection(DEBTS_COLLECTION).doc(id).update({
+    montoCobrado: firebase.firestore.FieldValue.increment(-Number(last.monto || 0)),
+    pagos: firebase.firestore.FieldValue.arrayRemove(last)
+  }).catch(() => alert("No se pudo deshacer. Revisá tu conexión."));
+}
+
 function removeDebt(id) {
   if (!confirm("¿Eliminar esta deuda?")) return;
   db.collection(DEBTS_COLLECTION).doc(id).delete()
     .catch(() => alert("No se pudo eliminar. Revisá tu conexión."));
 }
 
-document.getElementById("f_cliente").addEventListener("input", (e) => {
+function renderClienteDropdown(query) {
+  const dd = document.getElementById("clienteDropdown");
+  const q = (query || "").toLowerCase().trim();
+  const matches = clientesData
+    .filter(c => !q || (c.nombre || "").toLowerCase().includes(q))
+    .sort((a, b) => (a.nombre || "").localeCompare(b.nombre || ""))
+    .slice(0, 8);
+
+  let html = matches.map(c => `<div class="cliente-dd-item" data-id="${escapeAttr(c.id)}" style="padding:9px 12px; font-size:13px; cursor:pointer; border-bottom:1px solid #F1F5F9;">${escapeHtml(c.nombre)}${c.zona ? ` <span style="color:#94A3B8; font-size:11px;">· ${escapeHtml(c.zona)}</span>` : ""}</div>`).join("");
+
+  const exactMatch = clientesData.some(c => (c.nombre || "").toLowerCase() === q);
+  if (q && !exactMatch) {
+    html += `<div class="cliente-dd-new" style="padding:9px 12px; font-size:13px; cursor:pointer; color:#1D4ED8; font-weight:600;">+ Crear cliente nuevo: "${escapeHtml(query.trim())}"</div>`;
+  }
+  if (!html) {
+    html = `<div style="padding:9px 12px; font-size:12px; color:#94A3B8;">Escribí para buscar o crear un cliente</div>`;
+  }
+  dd.innerHTML = html;
+  dd.style.display = "block";
+}
+
+const f_clienteEl = document.getElementById("f_cliente");
+const clienteDropdownEl = document.getElementById("clienteDropdown");
+
+f_clienteEl.addEventListener("focus", (e) => renderClienteDropdown(e.target.value));
+f_clienteEl.addEventListener("input", (e) => {
+  renderClienteDropdown(e.target.value);
   const dir = getClienteDirectory();
   const match = dir.get(e.target.value.trim().toLowerCase());
   if (match) {
@@ -749,13 +984,36 @@ document.getElementById("f_cliente").addEventListener("input", (e) => {
   }
 });
 
+clienteDropdownEl.addEventListener("mousedown", (e) => {
+  const item = e.target.closest(".cliente-dd-item");
+  const newItem = e.target.closest(".cliente-dd-new");
+  if (item) {
+    const c = clientesData.find(x => x.id === item.dataset.id);
+    if (c) {
+      f_clienteEl.value = c.nombre;
+      document.getElementById("f_zona").value = c.zona || "";
+      document.getElementById("f_telefono").value = c.telefono || "";
+    }
+    clienteDropdownEl.style.display = "none";
+  } else if (newItem) {
+    clienteDropdownEl.style.display = "none";
+    f_clienteEl.focus();
+  }
+});
+
+document.addEventListener("click", (e) => {
+  if (!e.target.closest("#f_cliente") && !e.target.closest("#clienteDropdown")) {
+    clienteDropdownEl.style.display = "none";
+  }
+});
+
 document.getElementById("searchInput").addEventListener("input", render);
 document.getElementById("zonaFilter").addEventListener("change", render);
 document.getElementById("estadoFilter").addEventListener("change", render);
 
 const modalOverlay = document.getElementById("modalOverlay");
-document.getElementById("fabBtn").addEventListener("click", () => { modalOverlay.style.display = "flex"; });
-document.getElementById("closeModalBtn").addEventListener("click", () => { modalOverlay.style.display = "none"; });
+document.getElementById("fabBtn").addEventListener("click", () => { modalOverlay.style.display = "flex"; clienteDropdownEl.style.display = "none"; });
+document.getElementById("closeModalBtn").addEventListener("click", () => { modalOverlay.style.display = "none"; clienteDropdownEl.style.display = "none"; });
 modalOverlay.addEventListener("click", (e) => { if (e.target === modalOverlay) modalOverlay.style.display = "none"; });
 
 document.getElementById("saveDebtBtn").addEventListener("click", () => {
@@ -780,7 +1038,7 @@ document.getElementById("saveDebtBtn").addEventListener("click", () => {
     db.collection(CLIENTES_COLLECTION).add({ nombre: cliente, zona, telefono }).catch(() => {});
   }
 
-  db.collection(DEBTS_COLLECTION).add({ cliente, zona, telefono, monto, fechaEntrega, fechaLimite, detalle, estado: "pendiente" })
+  db.collection(DEBTS_COLLECTION).add({ cliente, zona, telefono, monto, fechaEntrega, fechaLimite, detalle, montoCobrado: 0, pagos: [] })
     .catch(() => alert("No se pudo guardar. Revisá tu conexión a internet."));
 
   document.getElementById("f_cliente").value = "";
@@ -792,92 +1050,6 @@ document.getElementById("saveDebtBtn").addEventListener("click", () => {
 
   modalOverlay.style.display = "none";
   render();
-});
-
-function exportBackup() {
-  const headers = ["cliente","zona","telefono","monto","fechaEntrega","fechaLimite","detalle","estado","fechaCobro"];
-  const rows = debts.map(d => headers.map(h => {
-    let v = d[h] === undefined || d[h] === null ? "" : String(d[h]);
-    if (v.includes(",") || v.includes('"') || v.includes("\n")) {
-      v = '"' + v.replace(/"/g, '""') + '"';
-    }
-    return v;
-  }).join(","));
-  const csv = "\uFEFF" + headers.join(",") + "\n" + rows.join("\n");
-  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  const fecha = todayISO();
-  a.href = url;
-  a.download = `backup_deudas_bermejo_${fecha}.csv`;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
-}
-
-function parseCsvLine(line) {
-  const result = [];
-  let cur = "";
-  let inQuotes = false;
-  for (let i = 0; i < line.length; i++) {
-    const ch = line[i];
-    if (inQuotes) {
-      if (ch === '"') {
-        if (line[i + 1] === '"') { cur += '"'; i++; }
-        else inQuotes = false;
-      } else cur += ch;
-    } else {
-      if (ch === '"') inQuotes = true;
-      else if (ch === ",") { result.push(cur); cur = ""; }
-      else cur += ch;
-    }
-  }
-  result.push(cur);
-  return result;
-}
-
-function importBackup(file) {
-  const reader = new FileReader();
-  reader.onload = async (e) => {
-    try {
-      let text = e.target.result.replace(/^\uFEFF/, "");
-      const lines = text.split(/\r?\n/).filter(l => l.trim().length > 0);
-      const headers = parseCsvLine(lines[0]);
-      const imported = lines.slice(1).map(line => {
-        const cols = parseCsvLine(line);
-        const obj = {};
-        headers.forEach((h, i) => { obj[h] = cols[i] !== undefined ? cols[i] : ""; });
-        obj.monto = Number(obj.monto) || 0;
-        return obj;
-      });
-      if (!confirm(`Se encontraron ${imported.length} deudas en el archivo. Esto va a REEMPLAZAR todos los datos actuales en TODOS los dispositivos conectados. ¿Continuar?`)) return;
-
-      const existing = await db.collection(DEBTS_COLLECTION).get();
-      const delBatch = db.batch();
-      existing.docs.forEach((d) => delBatch.delete(d.ref));
-      await delBatch.commit();
-
-      const addBatch = db.batch();
-      imported.forEach((obj) => {
-        const ref = db.collection(DEBTS_COLLECTION).doc();
-        addBatch.set(ref, obj);
-      });
-      await addBatch.commit();
-
-      alert("Backup restaurado correctamente en todos los dispositivos.");
-    } catch (err) {
-      alert("No se pudo restaurar el backup. Verificá que sea un archivo exportado desde esta misma app y que tengas conexión a internet.");
-    }
-  };
-  reader.readAsText(file, "UTF-8");
-}
-
-document.getElementById("exportBtn").addEventListener("click", exportBackup);
-document.getElementById("importBtn").addEventListener("click", () => document.getElementById("importFile").click());
-document.getElementById("importFile").addEventListener("change", (e) => {
-  if (e.target.files && e.target.files[0]) importBackup(e.target.files[0]);
-  e.target.value = "";
 });
 
 render();
