@@ -1,4 +1,4 @@
-const CACHE_NAME = "bermejo-cuentas-v10";
+const CACHE_NAME = "bermejo-cuentas-v11";
 const FILES_TO_CACHE = [
   "./",
   "./index.html",

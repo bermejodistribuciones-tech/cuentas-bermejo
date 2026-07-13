@@ -456,7 +456,23 @@
       <button id="addJornadaBtn" style="flex:1; padding:10px; border-radius:10px; background:#EFF4FF; color:#175CD3; border:none; font-weight:700; font-size:12px;">📅 Marcar día trabajado</button>
       <button id="addAdelantoBtn" style="flex:1; padding:10px; border-radius:10px; background:#FEF0C7; color:#B54708; border:none; font-weight:700; font-size:12px;">💵 Registrar adelanto</button>
     </div>
+    <div style="display:flex; gap:8px; margin:12px 0; align-items:flex-end;">
+      <div class="field" style="margin-bottom:0; flex:1;">
+        <label>Desde</label>
+        <input id="empleadoDesde" type="date">
+      </div>
+      <div class="field" style="margin-bottom:0; flex:1;">
+        <label>Hasta</label>
+        <input id="empleadoHasta" type="date">
+      </div>
+      <button id="empleadoResetBtn" style="padding:10px 12px; border-radius:8px; border:1px solid #E2E8F0; background:#F8FAFC; color:#475569; font-size:12px; font-weight:600; height:39px;">Todo</button>
+    </div>
     <div id="empleadoMovList"></div>
+    <div style="display:flex; gap:8px; margin-top:14px;">
+      <button id="empleadoPdfBtn" style="flex:1; padding:11px; border-radius:10px; background:#16233A; color:#fff; border:none; font-weight:700; font-size:13px;">📄 Descargar PDF</button>
+      <button id="empleadoWaBtn" style="flex:1; padding:11px; border-radius:10px; background:#12894F; color:#fff; border:none; font-weight:700; font-size:13px;">💬 Enviar por WhatsApp</button>
+    </div>
+    <div style="font-size:11px; color:#94A3B8; margin-top:8px;">WhatsApp no permite adjuntar el PDF solo: se abre el chat con un resumen en texto, y adjuntás el PDF descargado a mano.</div>
   </div>
 </div>
 
@@ -1065,8 +1081,65 @@ document.getElementById("deleteEmpleadoBtn").addEventListener("click", () => {
 
 function openEmpleadoDetail(id) {
   currentEmpleadoDetailId = id;
+  document.getElementById("empleadoDesde").value = "";
+  document.getElementById("empleadoHasta").value = "";
   document.getElementById("empleadoDetailModalOverlay").style.display = "flex";
   renderEmpleadoDetail(id);
+}
+
+function getMovimientosEmpleado(nombreEmpleado) {
+  const jorn = jornadasData
+    .filter(j => (j.empleado || "").trim().toLowerCase() === (nombreEmpleado || "").trim().toLowerCase())
+    .map(j => ({
+      id: j.id, tipoLabel: "Día trabajado", fecha: j.fecha, hora: "",
+      detalle: j.pagado ? `Pagado el ${fmtDate(j.fechaPago)}` : "Pendiente de pago",
+      formaPago: "", observacion: "", monto: Number(j.monto || 0), _raw: j, _tipo: "jornada",
+    }));
+  const adel = adelantosData
+    .filter(a => (a.empleado || "").trim().toLowerCase() === (nombreEmpleado || "").trim().toLowerCase())
+    .map(a => ({
+      id: a.id, tipoLabel: "Adelanto", fecha: a.fecha, hora: "",
+      detalle: "Adelanto entregado", formaPago: "", observacion: a.observacion || "",
+      monto: -Number(a.monto || 0), _raw: a, _tipo: "adelanto",
+    }));
+  const movimientos = [...jorn, ...adel];
+  movimientos.sort((a, b) => {
+    const da = a.fecha + " " + (a.hora || "00:00");
+    const db_ = b.fecha + " " + (b.hora || "00:00");
+    return da < db_ ? -1 : da > db_ ? 1 : 0;
+  });
+  let running = 0;
+  movimientos.forEach(m => { running += m.monto; m.saldoCorriente = running; });
+  return movimientos;
+}
+
+function buildEmpleadoMovRow(m) {
+  const esJornada = m._tipo === "jornada";
+  const j = m._raw;
+  return `<div class="debt-row">
+    <div style="min-width:0;">
+      <div class="debt-dates">${fmtDate(m.fecha)} · ${m.tipoLabel}</div>
+      ${esJornada
+        ? `<span class="badge" style="background:${j.pagado ? '#E7F6EC' : '#FEF0C7'}; color:${j.pagado ? '#087443' : '#B54708'};">${j.pagado ? "Pagado" : "Pendiente"}</span>`
+        : (m.observacion ? `<div style="color:#94A3B8; font-size:11px;">${escapeHtml(m.observacion)}</div>` : "")}
+    </div>
+    <div class="debt-actions">
+      <span class="num" style="font-weight:700; font-size:13px; color:${esJornada ? '#1E293B' : '#B54708'};">${esJornada ? "" : "-"}${money(Math.abs(m.monto))}</span>
+      ${esJornada && !j.pagado ? `<button class="icon-btn" style="background:#fff;border:1px solid #D0D5DD;color:#475569;" onclick="marcarJornadaPagada('${m.id}')" title="Pago realizado">✓</button>` : ""}
+      <button class="icon-btn" style="background:#FEE4E2;color:#B42318;" onclick="${esJornada ? "removeJornada" : "removeAdelanto"}('${m.id}')" title="Eliminar">🗑</button>
+    </div>
+  </div>`;
+}
+
+function buildEmpleadoPrintRow(m) {
+  const esJornada = m._tipo === "jornada";
+  return `<tr>
+    <td>${fmtDate(m.fecha)}</td>
+    <td>${m.tipoLabel}</td>
+    <td>${escapeHtml(m.detalle || "-")}${m.observacion ? `<br><span style="font-size:11px; color:#666;">${escapeHtml(m.observacion)}</span>` : ""}</td>
+    <td style="color:${esJornada ? '#B42318' : '#087443'};">${esJornada ? "+" : "-"}${money(Math.abs(m.monto))}</td>
+    <td style="font-weight:700;">${m.saldoCorriente < 0 ? "A favor empresa " : ""}${money(Math.abs(m.saldoCorriente))}</td>
+  </tr>`;
 }
 
 function renderEmpleadoDetail(id) {
@@ -1084,42 +1157,42 @@ function renderEmpleadoDetail(id) {
     </div>
   `;
 
-  const jorn = jornadasData.filter(j => (j.empleado || "").trim().toLowerCase() === e.nombre.trim().toLowerCase())
-    .map(j => ({ ...j, _tipo: "jornada" }));
-  const adel = adelantosData.filter(a => (a.empleado || "").trim().toLowerCase() === e.nombre.trim().toLowerCase())
-    .map(a => ({ ...a, _tipo: "adelanto" }));
-  const movs = [...jorn, ...adel].sort((a, b) => a.fecha < b.fecha ? 1 : -1);
+  const desde = document.getElementById("empleadoDesde").value;
+  const hasta = document.getElementById("empleadoHasta").value;
+  const todos = getMovimientosEmpleado(e.nombre);
+  const filtrados = todos.filter(m => (!desde || m.fecha >= desde) && (!hasta || m.fecha <= hasta));
 
-  if (movs.length === 0) {
+  if (todos.length === 0) {
     document.getElementById("empleadoMovList").innerHTML = `<div class="empty-msg">Todavía no hay días ni adelantos cargados.</div>`;
-    return;
+  } else if (filtrados.length === 0) {
+    document.getElementById("empleadoMovList").innerHTML = `<div class="empty-msg">Sin movimientos en este período.</div>`;
+  } else {
+    document.getElementById("empleadoMovList").innerHTML = `<div style="max-height:280px; overflow-y:auto; display:flex; flex-direction:column; gap:6px;">` +
+      filtrados.map(buildEmpleadoMovRow).join("") + `</div>`;
   }
 
-  document.getElementById("empleadoMovList").innerHTML = `<div style="max-height:280px; overflow-y:auto; display:flex; flex-direction:column; gap:6px;">` +
-    movs.map(m => {
-      if (m._tipo === "jornada") {
-        return `<div class="debt-row">
-          <div style="min-width:0;">
-            <div class="debt-dates">${fmtDate(m.fecha)} · Día trabajado</div>
-            <span class="badge" style="background:${m.pagado ? '#E7F6EC' : '#FEF0C7'}; color:${m.pagado ? '#087443' : '#B54708'};">${m.pagado ? "Pagado" : "Pendiente"}</span>
-          </div>
-          <div class="debt-actions">
-            <span class="num" style="font-weight:700; font-size:13px;">${money(m.monto)}</span>
-            ${!m.pagado ? `<button class="icon-btn" style="background:#fff;border:1px solid #D0D5DD;color:#475569;" onclick="marcarJornadaPagada('${m.id}')" title="Pago realizado">✓</button>` : ""}
-            <button class="icon-btn" style="background:#FEE4E2;color:#B42318;" onclick="removeJornada('${m.id}')" title="Eliminar">🗑</button>
-          </div>
-        </div>`;
-      }
-      return `<div class="debt-row">
-        <div style="min-width:0;">
-          <div class="debt-dates">${fmtDate(m.fecha)} · Adelanto${m.observacion ? `<br><span style="color:#94A3B8; font-size:11px;">${escapeHtml(m.observacion)}</span>` : ""}</div>
-        </div>
-        <div class="debt-actions">
-          <span class="num" style="font-weight:700; font-size:13px; color:#B54708;">-${money(m.monto)}</span>
-          <button class="icon-btn" style="background:#FEE4E2;color:#B42318;" onclick="removeAdelanto('${m.id}')" title="Eliminar">🗑</button>
-        </div>
-      </div>`;
-    }).join("") + `</div>`;
+  const hoy = fmtDate(todayISO());
+  const rangoTexto = desde || hasta
+    ? `Movimientos del ${desde ? fmtDate(desde) : "inicio"} al ${hasta ? fmtDate(hasta) : "hoy"}`
+    : "Historial completo";
+  const saldoFinal = filtrados.length ? filtrados[filtrados.length - 1].saldoCorriente : 0;
+  const saldoFinalLabel = saldoFinal < 0 ? `A favor de la empresa ${money(Math.abs(saldoFinal))}` : money(saldoFinal);
+
+  document.getElementById("printArea").innerHTML = `
+    <div style="font-family: Arial, sans-serif; color:#1E293B;">
+      <div style="font-size:11px; letter-spacing:1px; text-transform:uppercase; color:#64748B;">Bermejo Distribuciones</div>
+      <h2 style="margin:4px 0 2px;">Liquidación de pagos</h2>
+      <div style="font-size:12px; color:#64748B; margin-bottom:4px;">Generado el ${hoy}</div>
+      <div style="font-size:12px; color:#64748B; margin-bottom:14px;">${rangoTexto}</div>
+      <div style="font-weight:700; font-size:15px;">${escapeHtml(e.nombre)}</div>
+      <div style="font-size:12px; color:#64748B; margin-bottom:14px;">${e.telefono ? "Tel: " + escapeHtml(e.telefono) : ""}</div>
+      <table>
+        <thead><tr><th>Fecha</th><th>Tipo</th><th>Detalle</th><th>Monto</th><th>Saldo</th></tr></thead>
+        <tbody>${filtrados.map(buildEmpleadoPrintRow).join("") || `<tr><td colspan="5">Sin movimientos en este período</td></tr>`}</tbody>
+      </table>
+      <div style="margin-top:16px; font-size:14px; font-weight:700;">Saldo al final del período: ${saldoFinalLabel}</div>
+    </div>
+  `;
 }
 
 const empleadoDetailModalOverlay = document.getElementById("empleadoDetailModalOverlay");
@@ -1129,6 +1202,37 @@ document.getElementById("closeEmpleadoDetailModalBtn").addEventListener("click",
 });
 empleadoDetailModalOverlay.addEventListener("click", (e) => {
   if (e.target === empleadoDetailModalOverlay) { empleadoDetailModalOverlay.style.display = "none"; currentEmpleadoDetailId = null; }
+});
+
+document.getElementById("empleadoDesde").addEventListener("change", () => renderEmpleadoDetail(currentEmpleadoDetailId));
+document.getElementById("empleadoHasta").addEventListener("change", () => renderEmpleadoDetail(currentEmpleadoDetailId));
+document.getElementById("empleadoResetBtn").addEventListener("click", () => {
+  document.getElementById("empleadoDesde").value = "";
+  document.getElementById("empleadoHasta").value = "";
+  renderEmpleadoDetail(currentEmpleadoDetailId);
+});
+
+document.getElementById("empleadoPdfBtn").addEventListener("click", () => {
+  window.print();
+});
+
+document.getElementById("empleadoWaBtn").addEventListener("click", () => {
+  const e = empleadosData.find(x => x.id === currentEmpleadoDetailId);
+  if (!e) return;
+  const saldo = empleadoSaldo(e.nombre);
+  const hoy = fmtDate(todayISO());
+  let texto;
+  if (saldo > 0) {
+    texto = `Hola ${e.nombre}! Te paso tu liquidación con Bermejo Distribuciones al ${hoy}. Saldo a pagar: ${money(saldo)}.`;
+  } else if (saldo < 0) {
+    texto = `Hola ${e.nombre}! Te paso tu liquidación con Bermejo Distribuciones al ${hoy}. Quedaste con un adelanto a favor de la empresa de ${money(Math.abs(saldo))}.`;
+  } else {
+    texto = `Hola ${e.nombre}! Te paso tu liquidación con Bermejo Distribuciones al ${hoy}. Estás al día, sin saldo pendiente.`;
+  }
+  const url = e.telefono
+    ? `https://wa.me/${(e.telefono || "").replace(/[^0-9]/g, "")}?text=${encodeURIComponent(texto)}`
+    : `https://wa.me/?text=${encodeURIComponent(texto)}`;
+  window.open(url, "_blank");
 });
 
 function marcarJornadaPagada(id) {
