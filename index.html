@@ -196,6 +196,7 @@
 <div class="tabs">
   <button class="tab-btn active" id="tabDeudas">Cuentas</button>
   <button class="tab-btn" id="tabClientes">Clientes</button>
+  <button class="tab-btn" id="tabEmpleados">Empleados</button>
 </div>
 
 <div id="viewDeudas">
@@ -235,8 +236,19 @@
   <div id="clientesList"></div>
 </div>
 
+<div id="viewEmpleados" style="display:none;">
+  <div class="controls" style="margin-top:14px;">
+    <div class="search-wrap">
+      <span>🔍</span>
+      <input id="empleadoSearchInput" placeholder="Buscar empleado...">
+    </div>
+  </div>
+  <div id="empleadosList"></div>
+</div>
+
 <button class="fab" id="fabBtn">+</button>
 <button class="fab" id="fabClienteBtn" style="display:none;">+</button>
+<button class="fab" id="fabEmpleadoBtn" style="display:none;">+</button>
 <div class="save-note" id="saveNote" style="display:none;">Guardado ✓</div>
 
 <div class="modal-overlay" id="modalOverlay">
@@ -367,6 +379,87 @@
   </div>
 </div>
 
+<div class="modal-overlay" id="empleadoModalOverlay">
+  <div class="modal-sheet">
+    <div class="modal-head">
+      <div class="modal-title" id="empleadoModalTitle">Nuevo empleado</div>
+      <button class="close-btn" id="closeEmpleadoModalBtn">✕</button>
+    </div>
+    <div class="field">
+      <label>Nombre *</label>
+      <input id="e_nombre" placeholder="Nombre del empleado">
+    </div>
+    <div class="field">
+      <label>Teléfono (wa.me)</label>
+      <input id="e_telefono" placeholder="5492634123456">
+    </div>
+    <div class="field">
+      <label>Jornal diario (opcional)</label>
+      <input id="e_montoDiario" type="number" placeholder="Monto por día trabajado, si es fijo">
+    </div>
+    <div class="err-msg" id="empleadoFormError" style="display:none;"></div>
+    <button class="save-btn" id="saveEmpleadoBtn">Guardar empleado</button>
+    <button id="deleteEmpleadoBtn" style="display:none; width:100%; margin-top:8px; padding:10px; border-radius:10px; background:#FEE4E2; color:#B42318; border:none; font-weight:600; font-size:13px;">Eliminar empleado</button>
+  </div>
+</div>
+
+<div class="modal-overlay" id="jornadaModalOverlay">
+  <div class="modal-sheet">
+    <div class="modal-head">
+      <div class="modal-title">Marcar día trabajado</div>
+      <button class="close-btn" id="closeJornadaModalBtn">✕</button>
+    </div>
+    <div class="field">
+      <label>Fecha *</label>
+      <input id="j_fecha" type="date">
+    </div>
+    <div class="field">
+      <label>Monto del día *</label>
+      <input id="j_monto" type="number" placeholder="0">
+    </div>
+    <div class="err-msg" id="jornadaFormError" style="display:none;"></div>
+    <button class="save-btn" id="saveJornadaBtn">Marcar día</button>
+  </div>
+</div>
+
+<div class="modal-overlay" id="adelantoModalOverlay">
+  <div class="modal-sheet">
+    <div class="modal-head">
+      <div class="modal-title">Registrar adelanto</div>
+      <button class="close-btn" id="closeAdelantoModalBtn">✕</button>
+    </div>
+    <div class="field">
+      <label>Fecha *</label>
+      <input id="ad_fecha" type="date">
+    </div>
+    <div class="field">
+      <label>Monto adelantado *</label>
+      <input id="ad_monto" type="number" placeholder="0">
+    </div>
+    <div class="field">
+      <label>Observación (opcional)</label>
+      <input id="ad_observacion" placeholder="Ej: para arreglar la moto">
+    </div>
+    <div class="err-msg" id="adelantoFormError" style="display:none;"></div>
+    <button class="save-btn" id="saveAdelantoBtn">Registrar adelanto</button>
+  </div>
+</div>
+
+<div class="modal-overlay" id="empleadoDetailModalOverlay">
+  <div class="modal-sheet" style="max-width:520px;">
+    <div class="modal-head">
+      <div class="modal-title">Detalle del empleado</div>
+      <button class="close-btn" id="closeEmpleadoDetailModalBtn">✕</button>
+    </div>
+    <div id="empleadoDetailBody"></div>
+    <div style="display:flex; gap:8px; margin:12px 0;">
+      <button id="addJornadaBtn" style="flex:1; padding:10px; border-radius:10px; background:#EFF4FF; color:#175CD3; border:none; font-weight:700; font-size:12px;">📅 Marcar día trabajado</button>
+      <button id="addAdelantoBtn" style="flex:1; padding:10px; border-radius:10px; background:#FEF0C7; color:#B54708; border:none; font-weight:700; font-size:12px;">💵 Registrar adelanto</button>
+    </div>
+    <div id="empleadoMovList"></div>
+  </div>
+</div>
+
 <div id="printArea"></div>
 </div>
 
@@ -384,6 +477,9 @@ const auth = firebase.auth();
 const db = firebase.firestore();
 const DEBTS_COLLECTION = "deudas";
 const CLIENTES_COLLECTION = "clientes";
+const EMPLEADOS_COLLECTION = "empleados";
+const JORNADAS_COLLECTION = "jornadas";
+const ADELANTOS_COLLECTION = "adelantos";
 
 db.enablePersistence({ synchronizeTabs: true }).catch((err) => {
   console.warn("Persistencia offline no disponible:", err.code);
@@ -447,11 +543,17 @@ function setSyncStatus(ok, connecting) {
 
 let debts = [];
 let clientesData = [];
+let empleadosData = [];
+let jornadasData = [];
+let adelantosData = [];
 let expandedClient = null;
 let dataLoaded = false;
 let clientesLoaded = false;
+let empleadosLoaded = false;
 let alertsExpanded = false;
 let editingClienteId = null;
+let editingEmpleadoId = null;
+let currentEmpleadoDetailId = null;
 
 let listenerRetryScheduled = false;
 function scheduleListenerRetry() {
@@ -485,6 +587,31 @@ function attachListener() {
     (err) => {
       scheduleListenerRetry();
     }
+  );
+  db.collection(EMPLEADOS_COLLECTION).onSnapshot(
+    (snapshot) => {
+      empleadosData = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+      empleadosLoaded = true;
+      renderEmpleados();
+      if (currentEmpleadoDetailId) renderEmpleadoDetail(currentEmpleadoDetailId);
+    },
+    (err) => { scheduleListenerRetry(); }
+  );
+  db.collection(JORNADAS_COLLECTION).onSnapshot(
+    (snapshot) => {
+      jornadasData = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+      renderEmpleados();
+      if (currentEmpleadoDetailId) renderEmpleadoDetail(currentEmpleadoDetailId);
+    },
+    (err) => {}
+  );
+  db.collection(ADELANTOS_COLLECTION).onSnapshot(
+    (snapshot) => {
+      adelantosData = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+      renderEmpleados();
+      if (currentEmpleadoDetailId) renderEmpleadoDetail(currentEmpleadoDetailId);
+    },
+    (err) => {}
   );
 }
 
@@ -581,30 +708,49 @@ function getClienteDirectory() {
 
 const tabDeudas = document.getElementById("tabDeudas");
 const tabClientes = document.getElementById("tabClientes");
+const tabEmpleados = document.getElementById("tabEmpleados");
 const viewDeudas = document.getElementById("viewDeudas");
 const viewClientes = document.getElementById("viewClientes");
+const viewEmpleados = document.getElementById("viewEmpleados");
 const fabBtnEl = document.getElementById("fabBtn");
 const fabClienteBtnEl = document.getElementById("fabClienteBtn");
+const fabEmpleadoBtnEl = document.getElementById("fabEmpleadoBtn");
+
+function hideAllTabsFabs() {
+  fabBtnEl.style.display = "none";
+  fabClienteBtnEl.style.display = "none";
+  fabEmpleadoBtnEl.style.display = "none";
+  tabDeudas.classList.remove("active");
+  tabClientes.classList.remove("active");
+  tabEmpleados.classList.remove("active");
+  viewDeudas.style.display = "none";
+  viewClientes.style.display = "none";
+  viewEmpleados.style.display = "none";
+}
 
 tabDeudas.addEventListener("click", () => {
+  hideAllTabsFabs();
   tabDeudas.classList.add("active");
-  tabClientes.classList.remove("active");
   viewDeudas.style.display = "block";
-  viewClientes.style.display = "none";
   fabBtnEl.style.display = "flex";
-  fabClienteBtnEl.style.display = "none";
 });
 tabClientes.addEventListener("click", () => {
+  hideAllTabsFabs();
   tabClientes.classList.add("active");
-  tabDeudas.classList.remove("active");
   viewClientes.style.display = "block";
-  viewDeudas.style.display = "none";
   fabClienteBtnEl.style.display = "flex";
-  fabBtnEl.style.display = "none";
   renderClientes();
+});
+tabEmpleados.addEventListener("click", () => {
+  hideAllTabsFabs();
+  tabEmpleados.classList.add("active");
+  viewEmpleados.style.display = "block";
+  fabEmpleadoBtnEl.style.display = "flex";
+  renderEmpleados();
 });
 
 document.getElementById("clienteSearchInput").addEventListener("input", renderClientes);
+document.getElementById("empleadoSearchInput").addEventListener("input", renderEmpleados);
 
 function renderClientes() {
   const listEl = document.getElementById("clientesList");
@@ -822,6 +968,233 @@ document.getElementById("statementWaBtn").addEventListener("click", () => {
     ? `https://wa.me/${(cli.telefono || "").replace(/[^0-9]/g, "")}?text=${encodeURIComponent(texto)}`
     : `https://wa.me/?text=${encodeURIComponent(texto)}`;
   window.open(url, "_blank");
+});
+
+function empleadoSaldo(nombreEmpleado) {
+  const jorn = jornadasData.filter(j => (j.empleado || "").trim().toLowerCase() === (nombreEmpleado || "").trim().toLowerCase() && !j.pagado);
+  const adel = adelantosData.filter(a => (a.empleado || "").trim().toLowerCase() === (nombreEmpleado || "").trim().toLowerCase());
+  const totalJornadas = jorn.reduce((s, j) => s + Number(j.monto || 0), 0);
+  const totalAdelantos = adel.reduce((s, a) => s + Number(a.monto || 0), 0);
+  return totalJornadas - totalAdelantos;
+}
+
+function renderEmpleados() {
+  const listEl = document.getElementById("empleadosList");
+  if (!listEl) return;
+  if (!empleadosLoaded) {
+    listEl.innerHTML = `<div class="empty-msg">Sincronizando datos...<br><br><a href="#" onclick="attachListener(); return false;" style="color:#1D4ED8; font-weight:600;">¿Tarda mucho? Tocá para reintentar</a></div>`;
+    return;
+  }
+  const query = (document.getElementById("empleadoSearchInput").value || "").toLowerCase();
+  const filtrados = empleadosData
+    .filter(e => !query || (e.nombre || "").toLowerCase().includes(query))
+    .sort((a, b) => (a.nombre || "").localeCompare(b.nombre || ""));
+
+  if (filtrados.length === 0) {
+    listEl.innerHTML = `<div class="empty-msg">${empleadosData.length === 0 ? "Todavía no diste de alta ningún empleado. Tocá + para agregar el primero." : "No hay empleados que coincidan con la búsqueda."}</div>`;
+    return;
+  }
+
+  listEl.innerHTML = filtrados.map(e => {
+    const saldo = empleadoSaldo(e.nombre);
+    return `<div class="cliente-row">
+      <div class="cliente-info" onclick="openEmpleadoDetail('${escapeAttr(e.id)}')" style="cursor:pointer;">
+        <div class="cliente-nombre">${escapeHtml(e.nombre)}</div>
+        <div class="cliente-meta">${e.telefono ? escapeHtml(e.telefono) : ""}${e.montoDiario ? (e.telefono ? " · " : "") + "Jornal " + money(e.montoDiario) : ""}</div>
+      </div>
+      <div class="cliente-actions">
+        <span class="num" style="font-weight:700; font-size:13px; color:${saldo > 0 ? '#1E293B' : saldo < 0 ? '#7C3AED' : '#12894F'};">${saldo < 0 ? "A favor emp. " : ""}${money(Math.abs(saldo))}</span>
+        <button class="icon-btn" style="background:#F1F5F9; color:#475569;" onclick="openEditEmpleado('${escapeAttr(e.id)}')" title="Editar empleado">✏️</button>
+        ${e.telefono ? `<a class="wa-btn" href="${waLink(e.telefono)}" target="_blank">💬</a>` : ""}
+      </div>
+    </div>`;
+  }).join("");
+}
+
+function openNewEmpleado() {
+  editingEmpleadoId = null;
+  document.getElementById("empleadoModalTitle").textContent = "Nuevo empleado";
+  document.getElementById("e_nombre").value = "";
+  document.getElementById("e_telefono").value = "";
+  document.getElementById("e_montoDiario").value = "";
+  document.getElementById("empleadoFormError").style.display = "none";
+  document.getElementById("deleteEmpleadoBtn").style.display = "none";
+  document.getElementById("empleadoModalOverlay").style.display = "flex";
+}
+
+function openEditEmpleado(id) {
+  const e = empleadosData.find(x => x.id === id);
+  if (!e) return;
+  editingEmpleadoId = id;
+  document.getElementById("empleadoModalTitle").textContent = "Editar empleado";
+  document.getElementById("e_nombre").value = e.nombre || "";
+  document.getElementById("e_telefono").value = e.telefono || "";
+  document.getElementById("e_montoDiario").value = e.montoDiario || "";
+  document.getElementById("empleadoFormError").style.display = "none";
+  document.getElementById("deleteEmpleadoBtn").style.display = "block";
+  document.getElementById("empleadoModalOverlay").style.display = "flex";
+}
+
+const empleadoModalOverlay = document.getElementById("empleadoModalOverlay");
+fabEmpleadoBtnEl.addEventListener("click", openNewEmpleado);
+document.getElementById("closeEmpleadoModalBtn").addEventListener("click", () => { empleadoModalOverlay.style.display = "none"; });
+empleadoModalOverlay.addEventListener("click", (e) => { if (e.target === empleadoModalOverlay) empleadoModalOverlay.style.display = "none"; });
+
+document.getElementById("saveEmpleadoBtn").addEventListener("click", () => {
+  const nombre = document.getElementById("e_nombre").value.trim();
+  const telefono = document.getElementById("e_telefono").value.trim();
+  const montoDiario = Number(document.getElementById("e_montoDiario").value) || 0;
+  const errEl = document.getElementById("empleadoFormError");
+  if (!nombre) { errEl.textContent = "Falta el nombre del empleado."; errEl.style.display = "block"; return; }
+  errEl.style.display = "none";
+  const data = { nombre, telefono, montoDiario };
+  const op = editingEmpleadoId
+    ? db.collection(EMPLEADOS_COLLECTION).doc(editingEmpleadoId).update(data)
+    : db.collection(EMPLEADOS_COLLECTION).add(data);
+  op.catch(() => alert("No se pudo guardar. Revisá tu conexión."));
+  empleadoModalOverlay.style.display = "none";
+});
+
+document.getElementById("deleteEmpleadoBtn").addEventListener("click", () => {
+  if (!editingEmpleadoId) return;
+  if (!confirm("¿Eliminar este empleado? (No borra los días u adelantos ya cargados)")) return;
+  db.collection(EMPLEADOS_COLLECTION).doc(editingEmpleadoId).delete()
+    .catch(() => alert("No se pudo eliminar. Revisá tu conexión."));
+  empleadoModalOverlay.style.display = "none";
+});
+
+function openEmpleadoDetail(id) {
+  currentEmpleadoDetailId = id;
+  document.getElementById("empleadoDetailModalOverlay").style.display = "flex";
+  renderEmpleadoDetail(id);
+}
+
+function renderEmpleadoDetail(id) {
+  const e = empleadosData.find(x => x.id === id);
+  if (!e) return;
+  const saldo = empleadoSaldo(e.nombre);
+  const saldoLabel = saldo < 0 ? `A favor de la empresa ${money(Math.abs(saldo))}` : money(saldo);
+  const saldoColor = saldo > 0 ? "#1E293B" : saldo < 0 ? "#7C3AED" : "#12894F";
+
+  document.getElementById("empleadoDetailBody").innerHTML = `
+    <div style="margin-bottom:4px;">
+      <div style="font-weight:700; font-size:16px;">${escapeHtml(e.nombre)}</div>
+      <div style="font-size:12px; color:#94A3B8;">${e.telefono ? escapeHtml(e.telefono) : ""}${e.montoDiario ? (e.telefono ? " · " : "") + "Jornal " + money(e.montoDiario) : ""}</div>
+      <div style="font-size:13px; margin-top:8px;">Saldo a pagar: <span style="font-weight:700; color:${saldoColor};">${saldoLabel}</span></div>
+    </div>
+  `;
+
+  const jorn = jornadasData.filter(j => (j.empleado || "").trim().toLowerCase() === e.nombre.trim().toLowerCase())
+    .map(j => ({ ...j, _tipo: "jornada" }));
+  const adel = adelantosData.filter(a => (a.empleado || "").trim().toLowerCase() === e.nombre.trim().toLowerCase())
+    .map(a => ({ ...a, _tipo: "adelanto" }));
+  const movs = [...jorn, ...adel].sort((a, b) => a.fecha < b.fecha ? 1 : -1);
+
+  if (movs.length === 0) {
+    document.getElementById("empleadoMovList").innerHTML = `<div class="empty-msg">Todavía no hay días ni adelantos cargados.</div>`;
+    return;
+  }
+
+  document.getElementById("empleadoMovList").innerHTML = `<div style="max-height:280px; overflow-y:auto; display:flex; flex-direction:column; gap:6px;">` +
+    movs.map(m => {
+      if (m._tipo === "jornada") {
+        return `<div class="debt-row">
+          <div style="min-width:0;">
+            <div class="debt-dates">${fmtDate(m.fecha)} · Día trabajado</div>
+            <span class="badge" style="background:${m.pagado ? '#E7F6EC' : '#FEF0C7'}; color:${m.pagado ? '#087443' : '#B54708'};">${m.pagado ? "Pagado" : "Pendiente"}</span>
+          </div>
+          <div class="debt-actions">
+            <span class="num" style="font-weight:700; font-size:13px;">${money(m.monto)}</span>
+            ${!m.pagado ? `<button class="icon-btn" style="background:#fff;border:1px solid #D0D5DD;color:#475569;" onclick="marcarJornadaPagada('${m.id}')" title="Pago realizado">✓</button>` : ""}
+            <button class="icon-btn" style="background:#FEE4E2;color:#B42318;" onclick="removeJornada('${m.id}')" title="Eliminar">🗑</button>
+          </div>
+        </div>`;
+      }
+      return `<div class="debt-row">
+        <div style="min-width:0;">
+          <div class="debt-dates">${fmtDate(m.fecha)} · Adelanto${m.observacion ? `<br><span style="color:#94A3B8; font-size:11px;">${escapeHtml(m.observacion)}</span>` : ""}</div>
+        </div>
+        <div class="debt-actions">
+          <span class="num" style="font-weight:700; font-size:13px; color:#B54708;">-${money(m.monto)}</span>
+          <button class="icon-btn" style="background:#FEE4E2;color:#B42318;" onclick="removeAdelanto('${m.id}')" title="Eliminar">🗑</button>
+        </div>
+      </div>`;
+    }).join("") + `</div>`;
+}
+
+const empleadoDetailModalOverlay = document.getElementById("empleadoDetailModalOverlay");
+document.getElementById("closeEmpleadoDetailModalBtn").addEventListener("click", () => {
+  empleadoDetailModalOverlay.style.display = "none";
+  currentEmpleadoDetailId = null;
+});
+empleadoDetailModalOverlay.addEventListener("click", (e) => {
+  if (e.target === empleadoDetailModalOverlay) { empleadoDetailModalOverlay.style.display = "none"; currentEmpleadoDetailId = null; }
+});
+
+function marcarJornadaPagada(id) {
+  db.collection(JORNADAS_COLLECTION).doc(id).update({ pagado: true, fechaPago: todayISO() })
+    .catch(() => alert("No se pudo actualizar. Revisá tu conexión."));
+}
+function removeJornada(id) {
+  if (!confirm("¿Eliminar este día trabajado?")) return;
+  db.collection(JORNADAS_COLLECTION).doc(id).delete()
+    .catch(() => alert("No se pudo eliminar. Revisá tu conexión."));
+}
+function removeAdelanto(id) {
+  if (!confirm("¿Eliminar este adelanto?")) return;
+  db.collection(ADELANTOS_COLLECTION).doc(id).delete()
+    .catch(() => alert("No se pudo eliminar. Revisá tu conexión."));
+}
+
+const jornadaModalOverlay = document.getElementById("jornadaModalOverlay");
+document.getElementById("addJornadaBtn").addEventListener("click", () => {
+  const e = empleadosData.find(x => x.id === currentEmpleadoDetailId);
+  document.getElementById("j_fecha").value = todayISO();
+  document.getElementById("j_monto").value = e && e.montoDiario ? e.montoDiario : "";
+  document.getElementById("jornadaFormError").style.display = "none";
+  jornadaModalOverlay.style.display = "flex";
+});
+document.getElementById("closeJornadaModalBtn").addEventListener("click", () => { jornadaModalOverlay.style.display = "none"; });
+jornadaModalOverlay.addEventListener("click", (e) => { if (e.target === jornadaModalOverlay) jornadaModalOverlay.style.display = "none"; });
+
+document.getElementById("saveJornadaBtn").addEventListener("click", () => {
+  const e = empleadosData.find(x => x.id === currentEmpleadoDetailId);
+  if (!e) return;
+  const fecha = document.getElementById("j_fecha").value;
+  const monto = Number(document.getElementById("j_monto").value);
+  const errEl = document.getElementById("jornadaFormError");
+  if (!fecha) { errEl.textContent = "Falta la fecha."; errEl.style.display = "block"; return; }
+  if (!monto || monto <= 0) { errEl.textContent = "Falta el monto del día."; errEl.style.display = "block"; return; }
+  errEl.style.display = "none";
+  db.collection(JORNADAS_COLLECTION).add({ empleado: e.nombre, fecha, monto, pagado: false, fechaPago: null })
+    .catch(() => alert("No se pudo guardar. Revisá tu conexión."));
+  jornadaModalOverlay.style.display = "none";
+});
+
+const adelantoModalOverlay = document.getElementById("adelantoModalOverlay");
+document.getElementById("addAdelantoBtn").addEventListener("click", () => {
+  document.getElementById("ad_fecha").value = todayISO();
+  document.getElementById("ad_monto").value = "";
+  document.getElementById("ad_observacion").value = "";
+  document.getElementById("adelantoFormError").style.display = "none";
+  adelantoModalOverlay.style.display = "flex";
+});
+document.getElementById("closeAdelantoModalBtn").addEventListener("click", () => { adelantoModalOverlay.style.display = "none"; });
+adelantoModalOverlay.addEventListener("click", (e) => { if (e.target === adelantoModalOverlay) adelantoModalOverlay.style.display = "none"; });
+
+document.getElementById("saveAdelantoBtn").addEventListener("click", () => {
+  const e = empleadosData.find(x => x.id === currentEmpleadoDetailId);
+  if (!e) return;
+  const fecha = document.getElementById("ad_fecha").value;
+  const monto = Number(document.getElementById("ad_monto").value);
+  const observacion = document.getElementById("ad_observacion").value.trim();
+  const errEl = document.getElementById("adelantoFormError");
+  if (!fecha) { errEl.textContent = "Falta la fecha."; errEl.style.display = "block"; return; }
+  if (!monto || monto <= 0) { errEl.textContent = "Falta el monto del adelanto."; errEl.style.display = "block"; return; }
+  errEl.style.display = "none";
+  db.collection(ADELANTOS_COLLECTION).add({ empleado: e.nombre, fecha, monto, observacion })
+    .catch(() => alert("No se pudo guardar. Revisá tu conexión."));
+  adelantoModalOverlay.style.display = "none";
 });
 
 function openNewCliente() {
