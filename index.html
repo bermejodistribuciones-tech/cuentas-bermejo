@@ -646,7 +646,7 @@ function getMovimientosCliente(nombreCliente) {
   const movimientos = [];
   misDeudas.forEach(d => {
     movimientos.push({
-      tipo: "cargo",
+      tipoLabel: "Cargo",
       fecha: d.fechaEntrega,
       hora: "",
       detalle: d.detalle || "Pedido",
@@ -656,7 +656,7 @@ function getMovimientosCliente(nombreCliente) {
     });
     (d.pagos || []).forEach(p => {
       movimientos.push({
-        tipo: "pago",
+        tipoLabel: "Pago",
         fecha: p.fecha,
         hora: p.hora || "",
         detalle: "Pago",
@@ -664,6 +664,29 @@ function getMovimientosCliente(nombreCliente) {
         observacion: p.observacion || "",
         monto: -Number(p.monto || 0),
       });
+    });
+    (d.ajustes || []).forEach(a => {
+      if (a.tipo === "entrada") {
+        movimientos.push({
+          tipoLabel: "Saldo a favor aplicado",
+          fecha: a.fecha,
+          hora: a.hora || "",
+          detalle: a.observacion || "Aplicación de saldo a favor",
+          formaPago: "Saldo a favor",
+          observacion: "",
+          monto: -Number(a.monto || 0),
+        });
+      } else {
+        movimientos.push({
+          tipoLabel: "Traspaso de saldo a favor",
+          fecha: a.fecha,
+          hora: a.hora || "",
+          detalle: a.observacion || "Traspaso a otra deuda",
+          formaPago: "",
+          observacion: "",
+          monto: Number(a.monto || 0),
+        });
+      }
     });
   });
   movimientos.sort((a, b) => {
@@ -677,14 +700,14 @@ function getMovimientosCliente(nombreCliente) {
 }
 
 function buildMovRow(m) {
-  const esCargo = m.tipo === "cargo";
+  const esPositivo = m.monto >= 0;
   return `<tr>
     <td>${fmtDate(m.fecha)}</td>
     <td>${m.hora || "-"}</td>
-    <td>${esCargo ? "Cargo" : "Pago"}</td>
+    <td>${m.tipoLabel}</td>
     <td>${escapeHtml(m.detalle || "-")}${m.observacion ? `<br><span style="color:#94A3B8; font-size:11px;">${escapeHtml(m.observacion)}</span>` : ""}</td>
     <td>${escapeHtml(m.formaPago || "-")}</td>
-    <td style="color:${esCargo ? '#B42318' : '#12894F'}; font-weight:600;">${esCargo ? "+" : "-"}${money(Math.abs(m.monto))}</td>
+    <td style="color:${esPositivo ? '#B42318' : '#12894F'}; font-weight:600;">${esPositivo ? "+" : "-"}${money(Math.abs(m.monto))}</td>
     <td style="font-weight:700;">${m.saldoCorriente < 0 ? "A favor " : ""}${money(Math.abs(m.saldoCorriente))}</td>
   </tr>`;
 }
@@ -955,11 +978,12 @@ function render() {
       const saldo = saldoOf(d);
       const cobrado = montoCobradoOf(d);
       const pagosCount = (d.pagos || []).length;
+      const tieneAjusteEntrada = (d.ajustes || []).some(a => a.tipo === "entrada");
       return `<div class="debt-row">
         <div style="min-width:0;">
           <div class="debt-dates">${fmtDate(d.fechaEntrega)} · vence ${fmtDate(d.fechaLimite)}</div>
           <span class="badge" style="background:${ds.bg};color:${ds.fg};">${ds.label}</span>
-          ${cobrado > 0 ? `<div style="font-size:10px; color:#94A3B8; margin-top:2px;">Pagado ${money(cobrado)} de ${money(d.monto)}${pagosCount ? ` · ${pagosCount} pago${pagosCount === 1 ? "" : "s"}` : ""}</div>` : ""}
+          ${cobrado > 0 ? `<div style="font-size:10px; color:#94A3B8; margin-top:2px;">Pagado ${money(cobrado)} de ${money(d.monto)}${pagosCount ? ` · ${pagosCount} pago${pagosCount === 1 ? "" : "s"}` : ""}${tieneAjusteEntrada ? " · incluye saldo a favor" : ""}</div>` : ""}
         </div>
         <div class="debt-actions">
           <span class="num" style="font-weight:700;font-size:13px; color:${saldo < 0 ? '#7C3AED' : saldo === 0 ? '#12894F' : '#1E293B'};">${money(Math.abs(saldo))}</span>
@@ -1140,8 +1164,49 @@ document.getElementById("saveDebtBtn").addEventListener("click", () => {
     db.collection(CLIENTES_COLLECTION).add({ nombre: cliente, zona, telefono }).catch(() => {});
   }
 
-  db.collection(DEBTS_COLLECTION).add({ cliente, zona, telefono, monto, fechaEntrega, fechaLimite, detalle, montoCobrado: 0, pagos: [] })
+  // Ver si el cliente ya tiene saldo a favor en deudas anteriores, y aplicarlo a esta deuda nueva
+  const deudasPrevias = debts
+    .filter(d => (d.cliente || "").trim().toLowerCase() === cliente.toLowerCase())
+    .filter(d => saldoOf(d) < 0)
+    .sort((a, b) => a.fechaEntrega < b.fechaEntrega ? -1 : 1);
+
+  const creditoDisponible = deudasPrevias.reduce((s, d) => s - saldoOf(d), 0);
+  const aAplicar = Math.min(creditoDisponible, monto);
+
+  if (aAplicar > 0) {
+    let restante = aAplicar;
+    deudasPrevias.forEach(d => {
+      if (restante <= 0) return;
+      const creditoEnEsta = -saldoOf(d);
+      const take = Math.min(restante, creditoEnEsta);
+      if (take > 0) {
+        db.collection(DEBTS_COLLECTION).doc(d.id).update({
+          montoCobrado: firebase.firestore.FieldValue.increment(-take),
+          ajustes: firebase.firestore.FieldValue.arrayUnion({
+            tipo: "salida", fecha: todayISO(), hora: nowTime(), monto: take,
+            observacion: `Trasladado a nueva deuda del ${fmtDate(fechaEntrega)}${detalle ? " (" + detalle + ")" : ""}`
+          })
+        }).catch(() => {});
+      }
+      restante -= take;
+    });
+  }
+
+  const nuevaDeuda = { cliente, zona, telefono, monto, fechaEntrega, fechaLimite, detalle, montoCobrado: 0, pagos: [], ajustes: [] };
+  if (aAplicar > 0) {
+    nuevaDeuda.montoCobrado = aAplicar;
+    nuevaDeuda.ajustes = [{
+      tipo: "entrada", fecha: todayISO(), hora: nowTime(), monto: aAplicar,
+      observacion: "Aplicado automáticamente del saldo a favor del cliente"
+    }];
+  }
+
+  db.collection(DEBTS_COLLECTION).add(nuevaDeuda)
     .catch(() => alert("No se pudo guardar. Revisá tu conexión a internet."));
+
+  if (aAplicar > 0) {
+    alert(`Se aplicó automáticamente ${money(aAplicar)} de saldo a favor a esta nueva deuda.`);
+  }
 
   document.getElementById("f_cliente").value = "";
   document.getElementById("f_telefono").value = "";
