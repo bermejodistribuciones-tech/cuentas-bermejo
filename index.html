@@ -524,6 +524,10 @@
       <input id="zm_zona" placeholder="Ej: Franco - Zona Norte">
     </div>
     <div class="field">
+      <label>Total (el que te da Kyte)</label>
+      <input id="zm_total" type="number" placeholder="0">
+    </div>
+    <div class="field">
       <label>Efectivo</label>
       <input id="zm_efectivo" type="number" placeholder="0">
     </div>
@@ -552,7 +556,9 @@
     </div>
     <div class="field">
       <label>Zona / camioneta (opcional)</label>
-      <input id="gg_zona" placeholder="Ej: Franco - Zona Norte">
+      <select id="gg_zona">
+        <option value="">Sin especificar</option>
+      </select>
     </div>
     <div class="field">
       <label>Monto *</label>
@@ -1597,8 +1603,7 @@ function gastosDelDia(fecha) {
   return gastosGananciaData.filter(g => g.fecha === fecha).reduce((s, g) => s + Number(g.monto || 0), 0);
 }
 function zonaTotalesDelDia(fecha) {
-  return zonaMovsData.filter(z => z.fecha === fecha).reduce((s, z) =>
-    s + Number(z.efectivo || 0) + Number(z.transferencia || 0) + Number(z.deuda || 0), 0);
+  return zonaMovsData.filter(z => z.fecha === fecha).reduce((s, z) => s + Number(z.total || 0), 0);
 }
 function gananciaNetaDelDia(g) {
   return Number(g.gananciaBruta || 0) - gastosDelDia(g.fecha);
@@ -1673,11 +1678,14 @@ function renderGananciaDetail(fecha) {
     zonaListEl.innerHTML = `<div style="font-size:12px; color:#94A3B8;">Todavía no cargaste ninguna zona/camioneta para este día.</div>`;
   } else {
     zonaListEl.innerHTML = zonas.map(z => {
-      const total = Number(z.efectivo || 0) + Number(z.transferencia || 0) + Number(z.deuda || 0);
+      const sumaDesglose = Number(z.efectivo || 0) + Number(z.transferencia || 0) + Number(z.deuda || 0);
+      const total = Number(z.total || 0);
+      const coincide = Math.abs(total - sumaDesglose) < 1;
       return `<div class="debt-row">
         <div style="min-width:0;">
           <div class="debt-dates" style="font-weight:600; color:#1E293B;">${escapeHtml(z.zona)}</div>
           <div class="debt-dates">Efec ${money(z.efectivo)} · Transf ${money(z.transferencia)} · Deuda ${money(z.deuda)}</div>
+          ${!coincide ? `<div style="color:#B42318; font-size:11px; font-weight:600;">⚠ Desglose suma ${money(sumaDesglose)}, no coincide con el total</div>` : ""}
         </div>
         <div class="debt-actions">
           <span class="num" style="font-weight:700; font-size:13px;">${money(total)}</span>
@@ -1745,6 +1753,7 @@ const zonaMovModalOverlay = document.getElementById("zonaMovModalOverlay");
 document.getElementById("addZonaMovBtn").addEventListener("click", () => {
   editingZonaMovId = null;
   document.getElementById("zm_zona").value = "";
+  document.getElementById("zm_total").value = "";
   document.getElementById("zm_efectivo").value = "";
   document.getElementById("zm_transferencia").value = "";
   document.getElementById("zm_deuda").value = "";
@@ -1756,6 +1765,7 @@ function openEditZonaMov(id) {
   if (!z) return;
   editingZonaMovId = id;
   document.getElementById("zm_zona").value = z.zona || "";
+  document.getElementById("zm_total").value = z.total || "";
   document.getElementById("zm_efectivo").value = z.efectivo || "";
   document.getElementById("zm_transferencia").value = z.transferencia || "";
   document.getElementById("zm_deuda").value = z.deuda || "";
@@ -1770,13 +1780,14 @@ document.getElementById("closeZonaMovModalBtn").addEventListener("click", () => 
 zonaMovModalOverlay.addEventListener("click", (e) => { if (e.target === zonaMovModalOverlay) zonaMovModalOverlay.style.display = "none"; });
 document.getElementById("saveZonaMovBtn").addEventListener("click", () => {
   const zona = document.getElementById("zm_zona").value.trim();
+  const total = Number(document.getElementById("zm_total").value) || 0;
   const efectivo = Number(document.getElementById("zm_efectivo").value) || 0;
   const transferencia = Number(document.getElementById("zm_transferencia").value) || 0;
   const deuda = Number(document.getElementById("zm_deuda").value) || 0;
   const errEl = document.getElementById("zonaMovFormError");
   if (!zona) { errEl.textContent = "Falta el nombre de la zona/camioneta."; errEl.style.display = "block"; return; }
   errEl.style.display = "none";
-  const data = { fecha: currentGananciaFecha, zona, efectivo, transferencia, deuda };
+  const data = { fecha: currentGananciaFecha, zona, total, efectivo, transferencia, deuda };
   const op = editingZonaMovId
     ? db.collection(ZONA_MOVS_COLLECTION).doc(editingZonaMovId).update(data)
     : db.collection(ZONA_MOVS_COLLECTION).add(data);
@@ -1786,10 +1797,19 @@ document.getElementById("saveZonaMovBtn").addEventListener("click", () => {
 
 // --- Gastos / pagos ---
 const gastoGananciaModalOverlay = document.getElementById("gastoGananciaModalOverlay");
+function poblarSelectZonaGasto(zonaSeleccionada) {
+  const sel = document.getElementById("gg_zona");
+  const zonasDelDia = zonaMovsData.filter(z => z.fecha === currentGananciaFecha).map(z => z.zona);
+  const unicas = Array.from(new Set(zonasDelDia));
+  sel.innerHTML = `<option value="">Sin especificar</option>` +
+    unicas.map(z => `<option value="${escapeHtml(z)}">${escapeHtml(z)}</option>`).join("");
+  sel.value = zonaSeleccionada && unicas.includes(zonaSeleccionada) ? zonaSeleccionada : "";
+}
+
 document.getElementById("addGastoGananciaBtn").addEventListener("click", () => {
   editingGastoGananciaId = null;
   document.getElementById("gg_concepto").value = "";
-  document.getElementById("gg_zona").value = "";
+  poblarSelectZonaGasto("");
   document.getElementById("gg_monto").value = "";
   document.getElementById("gastoGananciaFormError").style.display = "none";
   gastoGananciaModalOverlay.style.display = "flex";
@@ -1799,7 +1819,7 @@ function openEditGastoGanancia(id) {
   if (!gg) return;
   editingGastoGananciaId = id;
   document.getElementById("gg_concepto").value = gg.concepto || "";
-  document.getElementById("gg_zona").value = gg.zona || "";
+  poblarSelectZonaGasto(gg.zona || "");
   document.getElementById("gg_monto").value = gg.monto || "";
   document.getElementById("gastoGananciaFormError").style.display = "none";
   gastoGananciaModalOverlay.style.display = "flex";
