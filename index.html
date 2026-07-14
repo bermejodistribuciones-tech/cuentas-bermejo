@@ -1100,6 +1100,13 @@ function getMovimientosEmpleado(nombreEmpleado) {
       observacion: j.consumidoAdelanto > 0 ? `Cubierto con adelanto: ${money(j.consumidoAdelanto)}` : "",
       formaPago: "", monto: Number(j.monto || 0), _raw: j, _tipo: "jornada",
     }));
+  const pagosEfectivo = jornadasData
+    .filter(j => (j.empleado || "").trim().toLowerCase() === (nombreEmpleado || "").trim().toLowerCase() && j.pagado && Number(j.pagoEfectivo || 0) > 0)
+    .map(j => ({
+      id: j.id + "_pago", tipoLabel: "Pago en efectivo", fecha: j.fechaPago || j.fecha, hora: "",
+      detalle: `Pago del día ${fmtDate(j.fecha)}`, observacion: "", formaPago: "Efectivo",
+      monto: -Number(j.pagoEfectivo || 0), _raw: j, _tipo: "pagoEfectivo",
+    }));
   const adel = adelantosData
     .filter(a => (a.empleado || "").trim().toLowerCase() === (nombreEmpleado || "").trim().toLowerCase())
     .map(a => ({
@@ -1112,7 +1119,7 @@ function getMovimientosEmpleado(nombreEmpleado) {
       ].filter(Boolean).join(" · "),
       monto: -Number(a.monto || 0), _raw: a, _tipo: "adelanto",
     }));
-  const movimientos = [...jorn, ...adel];
+  const movimientos = [...jorn, ...pagosEfectivo, ...adel];
   movimientos.sort((a, b) => {
     const da = a.fecha + " " + (a.hora || "00:00");
     const db_ = b.fecha + " " + (b.hora || "00:00");
@@ -1125,7 +1132,17 @@ function getMovimientosEmpleado(nombreEmpleado) {
 
 function buildEmpleadoMovRow(m) {
   const esJornada = m._tipo === "jornada";
+  const esPagoEfectivo = m._tipo === "pagoEfectivo";
   const j = m._raw;
+  let botones = "";
+  if (esJornada && !j.pagado) {
+    botones += `<button class="icon-btn" style="background:#fff;border:1px solid #D0D5DD;color:#475569;" onclick="marcarJornadaPagada('${m.id}')" title="Pago realizado">✓</button>`;
+  }
+  if (esJornada) {
+    botones += `<button class="icon-btn" style="background:#FEE4E2;color:#B42318;" onclick="removeJornada('${m.id}')" title="Eliminar">🗑</button>`;
+  } else if (!esPagoEfectivo) {
+    botones += `<button class="icon-btn" style="background:#FEE4E2;color:#B42318;" onclick="removeAdelanto('${m.id}')" title="Eliminar">🗑</button>`;
+  }
   return `<div class="debt-row">
     <div style="min-width:0;">
       <div class="debt-dates">${fmtDate(m.fecha)} · ${m.tipoLabel}</div>
@@ -1136,8 +1153,7 @@ function buildEmpleadoMovRow(m) {
     </div>
     <div class="debt-actions">
       <span class="num" style="font-weight:700; font-size:13px; color:${esJornada ? '#1E293B' : '#B54708'};">${esJornada ? "" : "-"}${money(Math.abs(m.monto))}</span>
-      ${esJornada && !j.pagado ? `<button class="icon-btn" style="background:#fff;border:1px solid #D0D5DD;color:#475569;" onclick="marcarJornadaPagada('${m.id}')" title="Pago realizado">✓</button>` : ""}
-      <button class="icon-btn" style="background:#FEE4E2;color:#B42318;" onclick="${esJornada ? "removeJornada" : "removeAdelanto"}('${m.id}')" title="Eliminar">🗑</button>
+      ${botones}
     </div>
   </div>`;
 }
@@ -1270,7 +1286,8 @@ function marcarJornadaPagada(id) {
   db.collection(JORNADAS_COLLECTION).doc(id).update({
     pagado: true,
     fechaPago: todayISO(),
-    consumidoAdelanto: consumidoTotal
+    consumidoAdelanto: consumidoTotal,
+    pagoEfectivo: restante
   }).catch(() => alert("No se pudo actualizar. Revisá tu conexión."));
 
   if (consumidoTotal > 0) {
