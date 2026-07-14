@@ -14,6 +14,8 @@
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore-compat.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf-autotable.min.js"></script>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body {
@@ -962,7 +964,59 @@ document.getElementById("statementResetBtn").addEventListener("click", () => {
 });
 
 document.getElementById("statementPdfBtn").addEventListener("click", () => {
-  window.print();
+  const clienteId = statementModalOverlay.dataset.clienteId;
+  const cli = clientesData.find(c => c.id === clienteId);
+  if (!cli) return;
+  const desde = document.getElementById("statementDesde").value;
+  const hasta = document.getElementById("statementHasta").value;
+  const todos = getMovimientosCliente(cli.nombre);
+  const filtrados = todos.filter(m => (!desde || m.fecha >= desde) && (!hasta || m.fecha <= hasta));
+  const rangoTexto = desde || hasta
+    ? `Movimientos del ${desde ? fmtDate(desde) : "inicio"} al ${hasta ? fmtDate(hasta) : "hoy"}`
+    : "Historial completo";
+  const saldoFinal = filtrados.length ? filtrados[filtrados.length - 1].saldoCorriente : 0;
+  const saldoFinalLabel = saldoFinal < 0 ? `A favor ${money(Math.abs(saldoFinal))}` : money(saldoFinal);
+
+  try {
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF();
+    doc.setFontSize(9); doc.setTextColor(120);
+    doc.text("BERMEJO DISTRIBUCIONES", 14, 15);
+    doc.setFontSize(17); doc.setTextColor(20);
+    doc.text("Estado de cuenta", 14, 23);
+    doc.setFontSize(9); doc.setTextColor(120);
+    doc.text(`Generado el ${fmtDate(todayISO())}`, 14, 29);
+    doc.text(rangoTexto, 14, 34);
+    doc.setFontSize(12); doc.setTextColor(20);
+    doc.text(cli.nombre, 14, 43);
+    doc.setFontSize(9); doc.setTextColor(120);
+    doc.text([cli.zona ? "Zona: " + cli.zona : "", cli.telefono ? "Tel: " + cli.telefono : ""].filter(Boolean).join("   ·   "), 14, 48);
+
+    const rows = filtrados.map(m => [
+      fmtDate(m.fecha), m.hora || "-", m.tipoLabel,
+      m.detalle + (m.observacion ? " (" + m.observacion + ")" : ""),
+      m.formaPago || "-",
+      (m.monto >= 0 ? "+" : "-") + money(Math.abs(m.monto)).replace("$", ""),
+      (m.saldoCorriente < 0 ? "A favor " : "") + money(Math.abs(m.saldoCorriente)).replace("$", ""),
+    ]);
+
+    doc.autoTable({
+      startY: 54,
+      head: [["Fecha", "Hora", "Tipo", "Detalle", "Forma de pago", "Monto", "Saldo"]],
+      body: rows.length ? rows : [["-", "-", "-", "Sin movimientos en este período", "-", "-", "-"]],
+      styles: { fontSize: 8 },
+      headStyles: { fillColor: [22, 35, 58] },
+    });
+
+    const finalY = doc.lastAutoTable.finalY + 10;
+    doc.setFontSize(12); doc.setTextColor(20);
+    doc.text(`Saldo al final del período: ${saldoFinalLabel}`, 14, finalY);
+
+    doc.save(`estado_cuenta_${cli.nombre.replace(/[^a-zA-Z0-9]+/g, "_")}_${todayISO()}.pdf`);
+  } catch (err) {
+    alert("No se pudo generar el PDF (puede requerir conexión a internet la primera vez). Probá con el botón de imprimir como alternativa.");
+    window.print();
+  }
 });
 
 document.getElementById("statementWaBtn").addEventListener("click", () => {
@@ -1240,7 +1294,57 @@ document.getElementById("empleadoResetBtn").addEventListener("click", () => {
 });
 
 document.getElementById("empleadoPdfBtn").addEventListener("click", () => {
-  window.print();
+  const e = empleadosData.find(x => x.id === currentEmpleadoDetailId);
+  if (!e) return;
+  const desde = document.getElementById("empleadoDesde").value;
+  const hasta = document.getElementById("empleadoHasta").value;
+  const todos = getMovimientosEmpleado(e.nombre);
+  const filtrados = todos.filter(m => (!desde || m.fecha >= desde) && (!hasta || m.fecha <= hasta));
+  const rangoTexto = desde || hasta
+    ? `Movimientos del ${desde ? fmtDate(desde) : "inicio"} al ${hasta ? fmtDate(hasta) : "hoy"}`
+    : "Historial completo";
+  const saldoFinal = filtrados.length ? filtrados[filtrados.length - 1].saldoCorriente : 0;
+  const saldoFinalLabel = saldoFinal < 0 ? `A favor de la empresa ${money(Math.abs(saldoFinal))}` : money(saldoFinal);
+
+  try {
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF();
+    doc.setFontSize(9); doc.setTextColor(120);
+    doc.text("BERMEJO DISTRIBUCIONES", 14, 15);
+    doc.setFontSize(17); doc.setTextColor(20);
+    doc.text("Liquidación de pagos", 14, 23);
+    doc.setFontSize(9); doc.setTextColor(120);
+    doc.text(`Generado el ${fmtDate(todayISO())}`, 14, 29);
+    doc.text(rangoTexto, 14, 34);
+    doc.setFontSize(12); doc.setTextColor(20);
+    doc.text(e.nombre, 14, 43);
+    doc.setFontSize(9); doc.setTextColor(120);
+    doc.text(e.telefono ? "Tel: " + e.telefono : "", 14, 48);
+
+    const rows = filtrados.map(m => [
+      fmtDate(m.fecha), m.tipoLabel,
+      m.detalle + (m.observacion ? " (" + m.observacion + ")" : ""),
+      (m.monto >= 0 ? "+" : "-") + money(Math.abs(m.monto)).replace("$", ""),
+      (m.saldoCorriente < 0 ? "A favor empresa " : "") + money(Math.abs(m.saldoCorriente)).replace("$", ""),
+    ]);
+
+    doc.autoTable({
+      startY: 54,
+      head: [["Fecha", "Tipo", "Detalle", "Monto", "Saldo"]],
+      body: rows.length ? rows : [["-", "-", "Sin movimientos en este período", "-", "-"]],
+      styles: { fontSize: 8 },
+      headStyles: { fillColor: [22, 35, 58] },
+    });
+
+    const finalY = doc.lastAutoTable.finalY + 10;
+    doc.setFontSize(12); doc.setTextColor(20);
+    doc.text(`Saldo al final del período: ${saldoFinalLabel}`, 14, finalY);
+
+    doc.save(`liquidacion_${e.nombre.replace(/[^a-zA-Z0-9]+/g, "_")}_${todayISO()}.pdf`);
+  } catch (err) {
+    alert("No se pudo generar el PDF (puede requerir conexión a internet la primera vez). Probá con el botón de imprimir como alternativa.");
+    window.print();
+  }
 });
 
 document.getElementById("empleadoWaBtn").addEventListener("click", () => {
