@@ -250,6 +250,15 @@
 </div>
 
 <div id="viewGanancia" style="display:none;">
+  <div id="gananciaResumen" style="margin:14px 14px 0; display:flex; gap:8px;"></div>
+  <div class="controls">
+    <div class="filter-row">
+      <input id="gananciaDesde" type="date" style="flex:1; padding:8px 10px; border-radius:10px; border:1px solid #E2E8F0; font-size:13px; background:#fff;">
+      <input id="gananciaHasta" type="date" style="flex:1; padding:8px 10px; border-radius:10px; border:1px solid #E2E8F0; font-size:13px; background:#fff;">
+      <button id="gananciaFiltroResetBtn" style="padding:8px 12px; border-radius:10px; border:1px solid #E2E8F0; background:#F8FAFC; color:#475569; font-size:12px; font-weight:600;">Todo</button>
+    </div>
+  </div>
+  <div id="gananciaPeriodoTotal" style="margin:8px 14px 0; font-size:13px;"></div>
   <div id="gananciasList"></div>
 </div>
 
@@ -484,6 +493,21 @@
   </div>
 </div>
 
+<div class="modal-overlay" id="nuevoDiaModalOverlay" style="z-index:70;">
+  <div class="modal-sheet">
+    <div class="modal-head">
+      <div class="modal-title">Nuevo día</div>
+      <button class="close-btn" id="closeNuevoDiaModalBtn">✕</button>
+    </div>
+    <div class="field">
+      <label>Fecha</label>
+      <input id="nd_fecha" type="date">
+    </div>
+    <div id="nd_preview" style="font-size:14px; font-weight:600; color:#1E293B; margin-bottom:14px;"></div>
+    <button class="save-btn" id="nd_continuarBtn">Continuar</button>
+  </div>
+</div>
+
 <div class="modal-overlay" id="gananciaDetailModalOverlay">
   <div class="modal-sheet" style="max-width:560px;">
     <div class="modal-head">
@@ -623,6 +647,13 @@ function fmtDate(iso) {
   if (!iso) return "-";
   const [y, m, d] = iso.split("-");
   return `${d}/${m}/${y}`;
+}
+function fmtDiaLargo(iso) {
+  if (!iso) return "-";
+  const d = new Date(iso + "T00:00:00");
+  let s = d.toLocaleDateString("es-AR", { weekday: "long", day: "numeric", month: "long" });
+  s = s.charAt(0).toUpperCase() + s.slice(1);
+  return s;
 }
 function waLink(phone) {
   const clean = (phone || "").replace(/[^0-9]/g, "");
@@ -1609,29 +1640,79 @@ function gananciaNetaDelDia(g) {
   return Number(g.gananciaBruta || 0) - gastosDelDia(g.fecha);
 }
 
+function rangoSemanaActual() {
+  const hoy = new Date(todayISO() + "T00:00:00");
+  const diaSemana = hoy.getDay(); // 0=domingo
+  const offsetLunes = diaSemana === 0 ? 6 : diaSemana - 1;
+  const lunes = new Date(hoy);
+  lunes.setDate(hoy.getDate() - offsetLunes);
+  const domingo = new Date(lunes);
+  domingo.setDate(lunes.getDate() + 6);
+  const toISO = (d) => d.toISOString().slice(0, 10);
+  return { desde: toISO(lunes), hasta: toISO(domingo) };
+}
+function rangoMesActual() {
+  const hoy = new Date(todayISO() + "T00:00:00");
+  const primero = new Date(hoy.getFullYear(), hoy.getMonth(), 1);
+  const ultimo = new Date(hoy.getFullYear(), hoy.getMonth() + 1, 0);
+  const toISO = (d) => d.toISOString().slice(0, 10);
+  return { desde: toISO(primero), hasta: toISO(ultimo) };
+}
+function sumaNetaEnRango(desde, hasta) {
+  return gananciasData
+    .filter(g => (!desde || g.fecha >= desde) && (!hasta || g.fecha <= hasta))
+    .reduce((s, g) => s + gananciaNetaDelDia(g), 0);
+}
+
 function renderGanancias() {
   const listEl = document.getElementById("gananciasList");
   if (!listEl) return;
   if (!gananciasLoaded) {
     listEl.innerHTML = `<div class="empty-msg">Sincronizando datos...<br><br><a href="#" onclick="attachListener(); return false;" style="color:#1D4ED8; font-weight:600;">¿Tarda mucho? Tocá para reintentar</a></div>`;
+    document.getElementById("gananciaResumen").innerHTML = "";
     return;
   }
-  const dias = [...gananciasData].sort((a, b) => a.fecha < b.fecha ? 1 : -1);
+
+  const semana = rangoSemanaActual();
+  const mes = rangoMesActual();
+  const totalSemana = sumaNetaEnRango(semana.desde, semana.hasta);
+  const totalMes = sumaNetaEnRango(mes.desde, mes.hasta);
+  document.getElementById("gananciaResumen").innerHTML = `
+    <div style="flex:1; background:#fff; border:1px solid #E2E8F0; border-radius:10px; padding:10px;">
+      <div style="font-size:11px; color:#94A3B8;">Esta semana</div>
+      <div class="num" style="font-size:16px; font-weight:700; color:${totalSemana >= 0 ? '#12894F' : '#B42318'};">${money(totalSemana)}</div>
+    </div>
+    <div style="flex:1; background:#fff; border:1px solid #E2E8F0; border-radius:10px; padding:10px;">
+      <div style="font-size:11px; color:#94A3B8;">Este mes</div>
+      <div class="num" style="font-size:16px; font-weight:700; color:${totalMes >= 0 ? '#12894F' : '#B42318'};">${money(totalMes)}</div>
+    </div>
+  `;
+
+  const desde = document.getElementById("gananciaDesde").value;
+  const hasta = document.getElementById("gananciaHasta").value;
+  const periodoTotalEl = document.getElementById("gananciaPeriodoTotal");
+  if (desde || hasta) {
+    const totalPeriodo = sumaNetaEnRango(desde, hasta);
+    periodoTotalEl.innerHTML = `Total del período filtrado: <strong style="color:${totalPeriodo >= 0 ? '#12894F' : '#B42318'};">${money(totalPeriodo)}</strong>`;
+  } else {
+    periodoTotalEl.textContent = "";
+  }
+
+  const dias = [...gananciasData]
+    .filter(g => (!desde || g.fecha >= desde) && (!hasta || g.fecha <= hasta))
+    .sort((a, b) => a.fecha < b.fecha ? 1 : -1);
+
   if (dias.length === 0) {
-    listEl.innerHTML = `<div class="empty-msg">Todavía no cargaste ningún día. Tocá + para agregar el de hoy.</div>`;
+    listEl.innerHTML = `<div class="empty-msg">${gananciasData.length === 0 ? "Todavía no cargaste ningún día. Tocá + para agregar el de hoy." : "No hay días cargados en ese período."}</div>`;
     return;
   }
   listEl.innerHTML = dias.map(g => {
     const neta = gananciaNetaDelDia(g);
     const totalGastos = gastosDelDia(g.fecha);
-    const totalZonas = zonaTotalesDelDia(g.fecha);
-    const diferencia = Number(g.gananciaBruta || 0) - totalZonas;
-    const hayZonas = zonaMovsData.some(z => z.fecha === g.fecha);
-    const diferenciaOk = !hayZonas || Math.abs(diferencia) < 1;
     return `<div class="cliente-row">
       <div class="cliente-info" onclick="openGananciaDetail('${g.fecha}')" style="cursor:pointer;">
-        <div class="cliente-nombre">${fmtDate(g.fecha)}</div>
-        <div class="cliente-meta">Bruta ${money(g.gananciaBruta)} · Gastos ${money(totalGastos)}${hayZonas && !diferenciaOk ? ` · <span style="color:#B42318; font-weight:700;">Descuadre ${money(Math.abs(diferencia))}</span>` : ""}</div>
+        <div class="cliente-nombre">${fmtDiaLargo(g.fecha)}</div>
+        <div class="cliente-meta">Bruta ${money(g.gananciaBruta)} · Gastos ${money(totalGastos)}</div>
       </div>
       <div class="cliente-actions">
         <span class="num" style="font-weight:700; font-size:14px; color:${neta >= 0 ? '#12894F' : '#B42318'};">${money(neta)}</span>
@@ -1642,15 +1723,31 @@ function renderGanancias() {
 }
 
 function openNewGananciaDia() {
-  const fecha = prompt("¿Qué día querés cargar? (formato AAAA-MM-DD, ej: " + todayISO() + ")", todayISO());
-  if (!fecha) return;
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) { alert("Formato de fecha inválido. Usá AAAA-MM-DD."); return; }
+  document.getElementById("nd_fecha").value = todayISO();
+  actualizarPreviewNuevoDia();
+  document.getElementById("nuevoDiaModalOverlay").style.display = "flex";
+}
+function actualizarPreviewNuevoDia() {
+  const fecha = document.getElementById("nd_fecha").value;
+  document.getElementById("nd_preview").textContent = fecha ? fmtDiaLargo(fecha) : "";
+}
+document.getElementById("nd_fecha").addEventListener("input", actualizarPreviewNuevoDia);
+document.getElementById("closeNuevoDiaModalBtn").addEventListener("click", () => {
+  document.getElementById("nuevoDiaModalOverlay").style.display = "none";
+});
+document.getElementById("nuevoDiaModalOverlay").addEventListener("click", (e) => {
+  if (e.target === document.getElementById("nuevoDiaModalOverlay")) document.getElementById("nuevoDiaModalOverlay").style.display = "none";
+});
+document.getElementById("nd_continuarBtn").addEventListener("click", () => {
+  const fecha = document.getElementById("nd_fecha").value;
+  if (!fecha) { alert("Elegí una fecha."); return; }
+  document.getElementById("nuevoDiaModalOverlay").style.display = "none";
   const existente = gananciasData.find(g => g.fecha === fecha);
   if (existente) { openGananciaDetail(fecha); return; }
   db.collection(GANANCIAS_COLLECTION).add({ fecha, gananciaBruta: 0 })
     .then(() => openGananciaDetail(fecha))
     .catch(() => alert("No se pudo crear el día. Revisá tu conexión."));
-}
+});
 
 function removeGananciaDia(fecha) {
   if (!confirm(`¿Eliminar el día ${fmtDate(fecha)} completo? Esto borra también sus zonas y gastos cargados.`)) return;
@@ -1669,7 +1766,7 @@ function openGananciaDetail(fecha) {
 function renderGananciaDetail(fecha) {
   const g = gananciasData.find(x => x.fecha === fecha);
   if (!g) return;
-  document.getElementById("gananciaDetailTitle").textContent = fmtDate(fecha);
+  document.getElementById("gananciaDetailTitle").textContent = fmtDiaLargo(fecha);
   document.getElementById("g_gananciaBruta").value = g.gananciaBruta || "";
 
   const zonas = zonaMovsData.filter(z => z.fecha === fecha);
@@ -1696,14 +1793,11 @@ function renderGananciaDetail(fecha) {
     }).join("");
   }
   const totalZonas = zonaTotalesDelDia(fecha);
-  const diferencia = Number(g.gananciaBruta || 0) - totalZonas;
   const diferenciaEl = document.getElementById("zonaMovDiferencia");
   if (zonas.length === 0) {
     diferenciaEl.textContent = "";
-  } else if (Math.abs(diferencia) < 1) {
-    diferenciaEl.innerHTML = `<span style="color:#12894F; font-weight:600;">✓ Coincide con la ganancia bruta (${money(totalZonas)})</span>`;
   } else {
-    diferenciaEl.innerHTML = `<span style="color:#B42318; font-weight:700;">⚠ No coincide: sumaste ${money(totalZonas)}, ${diferencia > 0 ? "falta" : "sobra"} ${money(Math.abs(diferencia))}</span>`;
+    diferenciaEl.innerHTML = `<span style="color:#64748B;">Total vendido entre todas las zonas: <strong>${money(totalZonas)}</strong> (esto es venta, no se compara con la ganancia)</span>`;
   }
 
   const gastos = gastosGananciaData.filter(gg => gg.fecha === fecha);
@@ -1731,6 +1825,13 @@ function renderGananciaDetail(fecha) {
 }
 
 const gananciaDetailModalOverlay = document.getElementById("gananciaDetailModalOverlay");
+document.getElementById("gananciaDesde").addEventListener("input", renderGanancias);
+document.getElementById("gananciaHasta").addEventListener("input", renderGanancias);
+document.getElementById("gananciaFiltroResetBtn").addEventListener("click", () => {
+  document.getElementById("gananciaDesde").value = "";
+  document.getElementById("gananciaHasta").value = "";
+  renderGanancias();
+});
 fabGananciaBtnEl.addEventListener("click", openNewGananciaDia);
 document.getElementById("closeGananciaDetailModalBtn").addEventListener("click", () => {
   gananciaDetailModalOverlay.style.display = "none";
