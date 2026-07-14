@@ -986,11 +986,15 @@ document.getElementById("statementWaBtn").addEventListener("click", () => {
   window.open(url, "_blank");
 });
 
+function adelantoRestante(a) {
+  return typeof a.restante === "number" ? a.restante : Number(a.monto || 0);
+}
+
 function empleadoSaldo(nombreEmpleado) {
   const jorn = jornadasData.filter(j => (j.empleado || "").trim().toLowerCase() === (nombreEmpleado || "").trim().toLowerCase() && !j.pagado);
   const adel = adelantosData.filter(a => (a.empleado || "").trim().toLowerCase() === (nombreEmpleado || "").trim().toLowerCase());
   const totalJornadas = jorn.reduce((s, j) => s + Number(j.monto || 0), 0);
-  const totalAdelantos = adel.reduce((s, a) => s + Number(a.monto || 0), 0);
+  const totalAdelantos = adel.reduce((s, a) => s + adelantoRestante(a), 0);
   return totalJornadas - totalAdelantos;
 }
 
@@ -1093,13 +1097,19 @@ function getMovimientosEmpleado(nombreEmpleado) {
     .map(j => ({
       id: j.id, tipoLabel: "Día trabajado", fecha: j.fecha, hora: "",
       detalle: j.pagado ? `Pagado el ${fmtDate(j.fechaPago)}` : "Pendiente de pago",
-      formaPago: "", observacion: "", monto: Number(j.monto || 0), _raw: j, _tipo: "jornada",
+      observacion: j.consumidoAdelanto > 0 ? `Cubierto con adelanto: ${money(j.consumidoAdelanto)}` : "",
+      formaPago: "", monto: Number(j.monto || 0), _raw: j, _tipo: "jornada",
     }));
   const adel = adelantosData
     .filter(a => (a.empleado || "").trim().toLowerCase() === (nombreEmpleado || "").trim().toLowerCase())
     .map(a => ({
       id: a.id, tipoLabel: "Adelanto", fecha: a.fecha, hora: "",
-      detalle: "Adelanto entregado", formaPago: "", observacion: a.observacion || "",
+      detalle: "Adelanto entregado",
+      formaPago: "",
+      observacion: [
+        a.observacion || "",
+        adelantoRestante(a) < Number(a.monto || 0) ? `Disponible: ${money(adelantoRestante(a))} de ${money(a.monto)}` : ""
+      ].filter(Boolean).join(" · "),
       monto: -Number(a.monto || 0), _raw: a, _tipo: "adelanto",
     }));
   const movimientos = [...jorn, ...adel];
@@ -1121,7 +1131,8 @@ function buildEmpleadoMovRow(m) {
       <div class="debt-dates">${fmtDate(m.fecha)} · ${m.tipoLabel}</div>
       ${esJornada
         ? `<span class="badge" style="background:${j.pagado ? '#E7F6EC' : '#FEF0C7'}; color:${j.pagado ? '#087443' : '#B54708'};">${j.pagado ? "Pagado" : "Pendiente"}</span>`
-        : (m.observacion ? `<div style="color:#94A3B8; font-size:11px;">${escapeHtml(m.observacion)}</div>` : "")}
+        : ""}
+      ${m.observacion ? `<div style="color:#94A3B8; font-size:11px; margin-top:2px;">${escapeHtml(m.observacion)}</div>` : ""}
     </div>
     <div class="debt-actions">
       <span class="num" style="font-weight:700; font-size:13px; color:${esJornada ? '#1E293B' : '#B54708'};">${esJornada ? "" : "-"}${money(Math.abs(m.monto))}</span>
@@ -1236,8 +1247,35 @@ document.getElementById("empleadoWaBtn").addEventListener("click", () => {
 });
 
 function marcarJornadaPagada(id) {
-  db.collection(JORNADAS_COLLECTION).doc(id).update({ pagado: true, fechaPago: todayISO() })
-    .catch(() => alert("No se pudo actualizar. Revisá tu conexión."));
+  const j = jornadasData.find(x => x.id === id);
+  if (!j) return;
+
+  const adelantosDisponibles = adelantosData
+    .filter(a => (a.empleado || "").trim().toLowerCase() === (j.empleado || "").trim().toLowerCase() && adelantoRestante(a) > 0)
+    .sort((a, b) => a.fecha < b.fecha ? -1 : 1);
+
+  let restante = Number(j.monto || 0);
+  let consumidoTotal = 0;
+  adelantosDisponibles.forEach(a => {
+    if (restante <= 0) return;
+    const disponible = adelantoRestante(a);
+    const take = Math.min(restante, disponible);
+    if (take > 0) {
+      db.collection(ADELANTOS_COLLECTION).doc(a.id).update({ restante: disponible - take }).catch(() => {});
+      restante -= take;
+      consumidoTotal += take;
+    }
+  });
+
+  db.collection(JORNADAS_COLLECTION).doc(id).update({
+    pagado: true,
+    fechaPago: todayISO(),
+    consumidoAdelanto: consumidoTotal
+  }).catch(() => alert("No se pudo actualizar. Revisá tu conexión."));
+
+  if (consumidoTotal > 0) {
+    alert(`Se cubrieron ${money(consumidoTotal)} de este día con adelantos ya entregados.`);
+  }
 }
 function removeJornada(id) {
   if (!confirm("¿Eliminar este día trabajado?")) return;
@@ -1296,7 +1334,7 @@ document.getElementById("saveAdelantoBtn").addEventListener("click", () => {
   if (!fecha) { errEl.textContent = "Falta la fecha."; errEl.style.display = "block"; return; }
   if (!monto || monto <= 0) { errEl.textContent = "Falta el monto del adelanto."; errEl.style.display = "block"; return; }
   errEl.style.display = "none";
-  db.collection(ADELANTOS_COLLECTION).add({ empleado: e.nombre, fecha, monto, observacion })
+  db.collection(ADELANTOS_COLLECTION).add({ empleado: e.nombre, fecha, monto, observacion, restante: monto })
     .catch(() => alert("No se pudo guardar. Revisá tu conexión."));
   adelantoModalOverlay.style.display = "none";
 });
