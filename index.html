@@ -199,6 +199,7 @@
   <button class="tab-btn active" id="tabDeudas">Cuentas</button>
   <button class="tab-btn" id="tabClientes">Clientes</button>
   <button class="tab-btn" id="tabEmpleados">Empleados</button>
+  <button class="tab-btn" id="tabGanancia">Ganancia</button>
 </div>
 
 <div id="viewDeudas">
@@ -248,9 +249,14 @@
   <div id="empleadosList"></div>
 </div>
 
+<div id="viewGanancia" style="display:none;">
+  <div id="gananciasList"></div>
+</div>
+
 <button class="fab" id="fabBtn">+</button>
 <button class="fab" id="fabClienteBtn" style="display:none;">+</button>
 <button class="fab" id="fabEmpleadoBtn" style="display:none;">+</button>
+<button class="fab" id="fabGananciaBtn" style="display:none;">+</button>
 <div class="save-note" id="saveNote" style="display:none;">Guardado ✓</div>
 
 <div class="modal-overlay" id="modalOverlay">
@@ -478,6 +484,85 @@
   </div>
 </div>
 
+<div class="modal-overlay" id="gananciaDetailModalOverlay">
+  <div class="modal-sheet" style="max-width:560px;">
+    <div class="modal-head">
+      <div class="modal-title" id="gananciaDetailTitle">Día</div>
+      <button class="close-btn" id="closeGananciaDetailModalBtn">✕</button>
+    </div>
+
+    <div class="field">
+      <label>Ganancia bruta del día (Kyte) *</label>
+      <input id="g_gananciaBruta" type="number" placeholder="0">
+    </div>
+    <button id="saveGananciaBrutaBtn" style="width:100%; padding:9px; border-radius:8px; background:#EFF4FF; color:#175CD3; border:none; font-weight:700; font-size:12px; margin-bottom:14px;">Guardar ganancia bruta</button>
+
+    <div style="font-weight:700; font-size:13px; margin-bottom:6px;">Por camioneta / zona</div>
+    <div id="zonaMovList" style="display:flex; flex-direction:column; gap:6px; margin-bottom:8px;"></div>
+    <button id="addZonaMovBtn" style="width:100%; padding:9px; border-radius:8px; background:#EFF4FF; color:#175CD3; border:none; font-weight:700; font-size:12px; margin-bottom:6px;">📍 Agregar zona / camioneta</button>
+    <div id="zonaMovDiferencia" style="font-size:12px; margin-bottom:14px;"></div>
+
+    <div style="font-weight:700; font-size:13px; margin-bottom:6px;">Gastos y pagos del día</div>
+    <div id="gastoGananciaList" style="display:flex; flex-direction:column; gap:6px; margin-bottom:8px;"></div>
+    <button id="addGastoGananciaBtn" style="width:100%; padding:9px; border-radius:8px; background:#FEF0C7; color:#B54708; border:none; font-weight:700; font-size:12px; margin-bottom:14px;">💵 Agregar gasto / pago</button>
+
+    <div style="border-top:1px solid #F1F5F9; padding-top:12px; text-align:center;">
+      <div style="font-size:12px; color:#94A3B8;">Ganancia neta del día</div>
+      <div id="gananciaNetaTotal" style="font-size:22px; font-weight:700;">$0</div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="zonaMovModalOverlay" style="z-index:70;">
+  <div class="modal-sheet">
+    <div class="modal-head">
+      <div class="modal-title">Zona / camioneta</div>
+      <button class="close-btn" id="closeZonaMovModalBtn">✕</button>
+    </div>
+    <div class="field">
+      <label>Zona / camioneta *</label>
+      <input id="zm_zona" placeholder="Ej: Franco - Zona Norte">
+    </div>
+    <div class="field">
+      <label>Efectivo</label>
+      <input id="zm_efectivo" type="number" placeholder="0">
+    </div>
+    <div class="field">
+      <label>Transferencia</label>
+      <input id="zm_transferencia" type="number" placeholder="0">
+    </div>
+    <div class="field">
+      <label>Deuda (a crédito)</label>
+      <input id="zm_deuda" type="number" placeholder="0">
+    </div>
+    <div class="err-msg" id="zonaMovFormError" style="display:none;"></div>
+    <button class="save-btn" id="saveZonaMovBtn">Guardar</button>
+  </div>
+</div>
+
+<div class="modal-overlay" id="gastoGananciaModalOverlay" style="z-index:70;">
+  <div class="modal-sheet">
+    <div class="modal-head">
+      <div class="modal-title">Gasto / pago</div>
+      <button class="close-btn" id="closeGastoGananciaModalBtn">✕</button>
+    </div>
+    <div class="field">
+      <label>Concepto *</label>
+      <input id="gg_concepto" placeholder="Ej: Nafta camioneta 2">
+    </div>
+    <div class="field">
+      <label>Zona / camioneta (opcional)</label>
+      <input id="gg_zona" placeholder="Ej: Franco - Zona Norte">
+    </div>
+    <div class="field">
+      <label>Monto *</label>
+      <input id="gg_monto" type="number" placeholder="0">
+    </div>
+    <div class="err-msg" id="gastoGananciaFormError" style="display:none;"></div>
+    <button class="save-btn" id="saveGastoGananciaBtn">Guardar</button>
+  </div>
+</div>
+
 <div id="printArea"></div>
 </div>
 
@@ -498,6 +583,9 @@ const CLIENTES_COLLECTION = "clientes";
 const EMPLEADOS_COLLECTION = "empleados";
 const JORNADAS_COLLECTION = "jornadas";
 const ADELANTOS_COLLECTION = "adelantos";
+const GANANCIAS_COLLECTION = "ganancias";
+const ZONA_MOVS_COLLECTION = "zona_movimientos";
+const GASTOS_GANANCIA_COLLECTION = "gastos_ganancia";
 
 db.enablePersistence({ synchronizeTabs: true }).catch((err) => {
   console.warn("Persistencia offline no disponible:", err.code);
@@ -572,6 +660,13 @@ let alertsExpanded = false;
 let editingClienteId = null;
 let editingEmpleadoId = null;
 let currentEmpleadoDetailId = null;
+let gananciasData = [];
+let zonaMovsData = [];
+let gastosGananciaData = [];
+let gananciasLoaded = false;
+let currentGananciaFecha = null;
+let editingZonaMovId = null;
+let editingGastoGananciaId = null;
 
 let listenerRetryScheduled = false;
 function scheduleListenerRetry() {
@@ -628,6 +723,31 @@ function attachListener() {
       adelantosData = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
       renderEmpleados();
       if (currentEmpleadoDetailId) renderEmpleadoDetail(currentEmpleadoDetailId);
+    },
+    (err) => {}
+  );
+  db.collection(GANANCIAS_COLLECTION).onSnapshot(
+    (snapshot) => {
+      gananciasData = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+      gananciasLoaded = true;
+      renderGanancias();
+      if (currentGananciaFecha) renderGananciaDetail(currentGananciaFecha);
+    },
+    (err) => { scheduleListenerRetry(); }
+  );
+  db.collection(ZONA_MOVS_COLLECTION).onSnapshot(
+    (snapshot) => {
+      zonaMovsData = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+      renderGanancias();
+      if (currentGananciaFecha) renderGananciaDetail(currentGananciaFecha);
+    },
+    (err) => {}
+  );
+  db.collection(GASTOS_GANANCIA_COLLECTION).onSnapshot(
+    (snapshot) => {
+      gastosGananciaData = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+      renderGanancias();
+      if (currentGananciaFecha) renderGananciaDetail(currentGananciaFecha);
     },
     (err) => {}
   );
@@ -727,23 +847,29 @@ function getClienteDirectory() {
 const tabDeudas = document.getElementById("tabDeudas");
 const tabClientes = document.getElementById("tabClientes");
 const tabEmpleados = document.getElementById("tabEmpleados");
+const tabGanancia = document.getElementById("tabGanancia");
 const viewDeudas = document.getElementById("viewDeudas");
 const viewClientes = document.getElementById("viewClientes");
 const viewEmpleados = document.getElementById("viewEmpleados");
+const viewGanancia = document.getElementById("viewGanancia");
 const fabBtnEl = document.getElementById("fabBtn");
 const fabClienteBtnEl = document.getElementById("fabClienteBtn");
 const fabEmpleadoBtnEl = document.getElementById("fabEmpleadoBtn");
+const fabGananciaBtnEl = document.getElementById("fabGananciaBtn");
 
 function hideAllTabsFabs() {
   fabBtnEl.style.display = "none";
   fabClienteBtnEl.style.display = "none";
   fabEmpleadoBtnEl.style.display = "none";
+  fabGananciaBtnEl.style.display = "none";
   tabDeudas.classList.remove("active");
   tabClientes.classList.remove("active");
   tabEmpleados.classList.remove("active");
+  tabGanancia.classList.remove("active");
   viewDeudas.style.display = "none";
   viewClientes.style.display = "none";
   viewEmpleados.style.display = "none";
+  viewGanancia.style.display = "none";
 }
 
 tabDeudas.addEventListener("click", () => {
@@ -765,6 +891,13 @@ tabEmpleados.addEventListener("click", () => {
   viewEmpleados.style.display = "block";
   fabEmpleadoBtnEl.style.display = "flex";
   renderEmpleados();
+});
+tabGanancia.addEventListener("click", () => {
+  hideAllTabsFabs();
+  tabGanancia.classList.add("active");
+  viewGanancia.style.display = "block";
+  fabGananciaBtnEl.style.display = "flex";
+  renderGanancias();
 });
 
 document.getElementById("clienteSearchInput").addEventListener("input", renderClientes);
@@ -1458,6 +1591,239 @@ document.getElementById("saveAdelantoBtn").addEventListener("click", () => {
   db.collection(ADELANTOS_COLLECTION).add({ empleado: e.nombre, fecha, monto, observacion, restante: monto })
     .catch(() => alert("No se pudo guardar. Revisá tu conexión."));
   adelantoModalOverlay.style.display = "none";
+});
+
+function gastosDelDia(fecha) {
+  return gastosGananciaData.filter(g => g.fecha === fecha).reduce((s, g) => s + Number(g.monto || 0), 0);
+}
+function zonaTotalesDelDia(fecha) {
+  return zonaMovsData.filter(z => z.fecha === fecha).reduce((s, z) =>
+    s + Number(z.efectivo || 0) + Number(z.transferencia || 0) + Number(z.deuda || 0), 0);
+}
+function gananciaNetaDelDia(g) {
+  return Number(g.gananciaBruta || 0) - gastosDelDia(g.fecha);
+}
+
+function renderGanancias() {
+  const listEl = document.getElementById("gananciasList");
+  if (!listEl) return;
+  if (!gananciasLoaded) {
+    listEl.innerHTML = `<div class="empty-msg">Sincronizando datos...<br><br><a href="#" onclick="attachListener(); return false;" style="color:#1D4ED8; font-weight:600;">¿Tarda mucho? Tocá para reintentar</a></div>`;
+    return;
+  }
+  const dias = [...gananciasData].sort((a, b) => a.fecha < b.fecha ? 1 : -1);
+  if (dias.length === 0) {
+    listEl.innerHTML = `<div class="empty-msg">Todavía no cargaste ningún día. Tocá + para agregar el de hoy.</div>`;
+    return;
+  }
+  listEl.innerHTML = dias.map(g => {
+    const neta = gananciaNetaDelDia(g);
+    const totalGastos = gastosDelDia(g.fecha);
+    const totalZonas = zonaTotalesDelDia(g.fecha);
+    const diferencia = Number(g.gananciaBruta || 0) - totalZonas;
+    const hayZonas = zonaMovsData.some(z => z.fecha === g.fecha);
+    const diferenciaOk = !hayZonas || Math.abs(diferencia) < 1;
+    return `<div class="cliente-row">
+      <div class="cliente-info" onclick="openGananciaDetail('${g.fecha}')" style="cursor:pointer;">
+        <div class="cliente-nombre">${fmtDate(g.fecha)}</div>
+        <div class="cliente-meta">Bruta ${money(g.gananciaBruta)} · Gastos ${money(totalGastos)}${hayZonas && !diferenciaOk ? ` · <span style="color:#B42318; font-weight:700;">Descuadre ${money(Math.abs(diferencia))}</span>` : ""}</div>
+      </div>
+      <div class="cliente-actions">
+        <span class="num" style="font-weight:700; font-size:14px; color:${neta >= 0 ? '#12894F' : '#B42318'};">${money(neta)}</span>
+        <button class="icon-btn" style="background:#FEE4E2;color:#B42318;" onclick="removeGananciaDia('${g.fecha}')" title="Eliminar día">🗑</button>
+      </div>
+    </div>`;
+  }).join("");
+}
+
+function openNewGananciaDia() {
+  const fecha = prompt("¿Qué día querés cargar? (formato AAAA-MM-DD, ej: " + todayISO() + ")", todayISO());
+  if (!fecha) return;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) { alert("Formato de fecha inválido. Usá AAAA-MM-DD."); return; }
+  const existente = gananciasData.find(g => g.fecha === fecha);
+  if (existente) { openGananciaDetail(fecha); return; }
+  db.collection(GANANCIAS_COLLECTION).add({ fecha, gananciaBruta: 0 })
+    .then(() => openGananciaDetail(fecha))
+    .catch(() => alert("No se pudo crear el día. Revisá tu conexión."));
+}
+
+function removeGananciaDia(fecha) {
+  if (!confirm(`¿Eliminar el día ${fmtDate(fecha)} completo? Esto borra también sus zonas y gastos cargados.`)) return;
+  const g = gananciasData.find(x => x.fecha === fecha);
+  if (g) db.collection(GANANCIAS_COLLECTION).doc(g.id).delete().catch(() => {});
+  zonaMovsData.filter(z => z.fecha === fecha).forEach(z => db.collection(ZONA_MOVS_COLLECTION).doc(z.id).delete().catch(() => {}));
+  gastosGananciaData.filter(gg => gg.fecha === fecha).forEach(gg => db.collection(GASTOS_GANANCIA_COLLECTION).doc(gg.id).delete().catch(() => {}));
+}
+
+function openGananciaDetail(fecha) {
+  currentGananciaFecha = fecha;
+  document.getElementById("gananciaDetailModalOverlay").style.display = "flex";
+  renderGananciaDetail(fecha);
+}
+
+function renderGananciaDetail(fecha) {
+  const g = gananciasData.find(x => x.fecha === fecha);
+  if (!g) return;
+  document.getElementById("gananciaDetailTitle").textContent = fmtDate(fecha);
+  document.getElementById("g_gananciaBruta").value = g.gananciaBruta || "";
+
+  const zonas = zonaMovsData.filter(z => z.fecha === fecha);
+  const zonaListEl = document.getElementById("zonaMovList");
+  if (zonas.length === 0) {
+    zonaListEl.innerHTML = `<div style="font-size:12px; color:#94A3B8;">Todavía no cargaste ninguna zona/camioneta para este día.</div>`;
+  } else {
+    zonaListEl.innerHTML = zonas.map(z => {
+      const total = Number(z.efectivo || 0) + Number(z.transferencia || 0) + Number(z.deuda || 0);
+      return `<div class="debt-row">
+        <div style="min-width:0;">
+          <div class="debt-dates" style="font-weight:600; color:#1E293B;">${escapeHtml(z.zona)}</div>
+          <div class="debt-dates">Efec ${money(z.efectivo)} · Transf ${money(z.transferencia)} · Deuda ${money(z.deuda)}</div>
+        </div>
+        <div class="debt-actions">
+          <span class="num" style="font-weight:700; font-size:13px;">${money(total)}</span>
+          <button class="icon-btn" style="background:#F1F5F9;color:#475569;" onclick="openEditZonaMov('${z.id}')" title="Editar">✏️</button>
+          <button class="icon-btn" style="background:#FEE4E2;color:#B42318;" onclick="removeZonaMov('${z.id}')" title="Eliminar">🗑</button>
+        </div>
+      </div>`;
+    }).join("");
+  }
+  const totalZonas = zonaTotalesDelDia(fecha);
+  const diferencia = Number(g.gananciaBruta || 0) - totalZonas;
+  const diferenciaEl = document.getElementById("zonaMovDiferencia");
+  if (zonas.length === 0) {
+    diferenciaEl.textContent = "";
+  } else if (Math.abs(diferencia) < 1) {
+    diferenciaEl.innerHTML = `<span style="color:#12894F; font-weight:600;">✓ Coincide con la ganancia bruta (${money(totalZonas)})</span>`;
+  } else {
+    diferenciaEl.innerHTML = `<span style="color:#B42318; font-weight:700;">⚠ No coincide: sumaste ${money(totalZonas)}, ${diferencia > 0 ? "falta" : "sobra"} ${money(Math.abs(diferencia))}</span>`;
+  }
+
+  const gastos = gastosGananciaData.filter(gg => gg.fecha === fecha);
+  const gastoListEl = document.getElementById("gastoGananciaList");
+  if (gastos.length === 0) {
+    gastoListEl.innerHTML = `<div style="font-size:12px; color:#94A3B8;">Todavía no cargaste gastos ni pagos para este día.</div>`;
+  } else {
+    gastoListEl.innerHTML = gastos.map(gg => `<div class="debt-row">
+      <div style="min-width:0;">
+        <div class="debt-dates" style="font-weight:600; color:#1E293B;">${escapeHtml(gg.concepto)}</div>
+        ${gg.zona ? `<div class="debt-dates">${escapeHtml(gg.zona)}</div>` : ""}
+      </div>
+      <div class="debt-actions">
+        <span class="num" style="font-weight:700; font-size:13px; color:#B54708;">-${money(gg.monto)}</span>
+        <button class="icon-btn" style="background:#F1F5F9;color:#475569;" onclick="openEditGastoGanancia('${gg.id}')" title="Editar">✏️</button>
+        <button class="icon-btn" style="background:#FEE4E2;color:#B42318;" onclick="removeGastoGanancia('${gg.id}')" title="Eliminar">🗑</button>
+      </div>
+    </div>`).join("");
+  }
+
+  const neta = gananciaNetaDelDia(g);
+  const netaEl = document.getElementById("gananciaNetaTotal");
+  netaEl.textContent = money(neta);
+  netaEl.style.color = neta >= 0 ? "#12894F" : "#B42318";
+}
+
+const gananciaDetailModalOverlay = document.getElementById("gananciaDetailModalOverlay");
+fabGananciaBtnEl.addEventListener("click", openNewGananciaDia);
+document.getElementById("closeGananciaDetailModalBtn").addEventListener("click", () => {
+  gananciaDetailModalOverlay.style.display = "none";
+  currentGananciaFecha = null;
+});
+gananciaDetailModalOverlay.addEventListener("click", (e) => {
+  if (e.target === gananciaDetailModalOverlay) { gananciaDetailModalOverlay.style.display = "none"; currentGananciaFecha = null; }
+});
+
+document.getElementById("saveGananciaBrutaBtn").addEventListener("click", () => {
+  const g = gananciasData.find(x => x.fecha === currentGananciaFecha);
+  if (!g) return;
+  const monto = Number(document.getElementById("g_gananciaBruta").value) || 0;
+  db.collection(GANANCIAS_COLLECTION).doc(g.id).update({ gananciaBruta: monto })
+    .catch(() => alert("No se pudo guardar. Revisá tu conexión."));
+});
+
+// --- Zona / camioneta ---
+const zonaMovModalOverlay = document.getElementById("zonaMovModalOverlay");
+document.getElementById("addZonaMovBtn").addEventListener("click", () => {
+  editingZonaMovId = null;
+  document.getElementById("zm_zona").value = "";
+  document.getElementById("zm_efectivo").value = "";
+  document.getElementById("zm_transferencia").value = "";
+  document.getElementById("zm_deuda").value = "";
+  document.getElementById("zonaMovFormError").style.display = "none";
+  zonaMovModalOverlay.style.display = "flex";
+});
+function openEditZonaMov(id) {
+  const z = zonaMovsData.find(x => x.id === id);
+  if (!z) return;
+  editingZonaMovId = id;
+  document.getElementById("zm_zona").value = z.zona || "";
+  document.getElementById("zm_efectivo").value = z.efectivo || "";
+  document.getElementById("zm_transferencia").value = z.transferencia || "";
+  document.getElementById("zm_deuda").value = z.deuda || "";
+  document.getElementById("zonaMovFormError").style.display = "none";
+  zonaMovModalOverlay.style.display = "flex";
+}
+function removeZonaMov(id) {
+  if (!confirm("¿Eliminar esta zona/camioneta del día?")) return;
+  db.collection(ZONA_MOVS_COLLECTION).doc(id).delete().catch(() => alert("No se pudo eliminar. Revisá tu conexión."));
+}
+document.getElementById("closeZonaMovModalBtn").addEventListener("click", () => { zonaMovModalOverlay.style.display = "none"; });
+zonaMovModalOverlay.addEventListener("click", (e) => { if (e.target === zonaMovModalOverlay) zonaMovModalOverlay.style.display = "none"; });
+document.getElementById("saveZonaMovBtn").addEventListener("click", () => {
+  const zona = document.getElementById("zm_zona").value.trim();
+  const efectivo = Number(document.getElementById("zm_efectivo").value) || 0;
+  const transferencia = Number(document.getElementById("zm_transferencia").value) || 0;
+  const deuda = Number(document.getElementById("zm_deuda").value) || 0;
+  const errEl = document.getElementById("zonaMovFormError");
+  if (!zona) { errEl.textContent = "Falta el nombre de la zona/camioneta."; errEl.style.display = "block"; return; }
+  errEl.style.display = "none";
+  const data = { fecha: currentGananciaFecha, zona, efectivo, transferencia, deuda };
+  const op = editingZonaMovId
+    ? db.collection(ZONA_MOVS_COLLECTION).doc(editingZonaMovId).update(data)
+    : db.collection(ZONA_MOVS_COLLECTION).add(data);
+  op.catch(() => alert("No se pudo guardar. Revisá tu conexión."));
+  zonaMovModalOverlay.style.display = "none";
+});
+
+// --- Gastos / pagos ---
+const gastoGananciaModalOverlay = document.getElementById("gastoGananciaModalOverlay");
+document.getElementById("addGastoGananciaBtn").addEventListener("click", () => {
+  editingGastoGananciaId = null;
+  document.getElementById("gg_concepto").value = "";
+  document.getElementById("gg_zona").value = "";
+  document.getElementById("gg_monto").value = "";
+  document.getElementById("gastoGananciaFormError").style.display = "none";
+  gastoGananciaModalOverlay.style.display = "flex";
+});
+function openEditGastoGanancia(id) {
+  const gg = gastosGananciaData.find(x => x.id === id);
+  if (!gg) return;
+  editingGastoGananciaId = id;
+  document.getElementById("gg_concepto").value = gg.concepto || "";
+  document.getElementById("gg_zona").value = gg.zona || "";
+  document.getElementById("gg_monto").value = gg.monto || "";
+  document.getElementById("gastoGananciaFormError").style.display = "none";
+  gastoGananciaModalOverlay.style.display = "flex";
+}
+function removeGastoGanancia(id) {
+  if (!confirm("¿Eliminar este gasto/pago?")) return;
+  db.collection(GASTOS_GANANCIA_COLLECTION).doc(id).delete().catch(() => alert("No se pudo eliminar. Revisá tu conexión."));
+}
+document.getElementById("closeGastoGananciaModalBtn").addEventListener("click", () => { gastoGananciaModalOverlay.style.display = "none"; });
+gastoGananciaModalOverlay.addEventListener("click", (e) => { if (e.target === gastoGananciaModalOverlay) gastoGananciaModalOverlay.style.display = "none"; });
+document.getElementById("saveGastoGananciaBtn").addEventListener("click", () => {
+  const concepto = document.getElementById("gg_concepto").value.trim();
+  const zona = document.getElementById("gg_zona").value.trim();
+  const monto = Number(document.getElementById("gg_monto").value);
+  const errEl = document.getElementById("gastoGananciaFormError");
+  if (!concepto) { errEl.textContent = "Falta el concepto."; errEl.style.display = "block"; return; }
+  if (!monto || monto <= 0) { errEl.textContent = "Falta el monto."; errEl.style.display = "block"; return; }
+  errEl.style.display = "none";
+  const data = { fecha: currentGananciaFecha, concepto, zona, monto };
+  const op = editingGastoGananciaId
+    ? db.collection(GASTOS_GANANCIA_COLLECTION).doc(editingGastoGananciaId).update(data)
+    : db.collection(GASTOS_GANANCIA_COLLECTION).add(data);
+  op.catch(() => alert("No se pudo guardar. Revisá tu conexión."));
+  gastoGananciaModalOverlay.style.display = "none";
 });
 
 function openNewCliente() {
