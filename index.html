@@ -2122,7 +2122,7 @@ function render() {
     }).join("");
 
     return `<div class="client-card">
-      <button class="client-head" onclick="toggleClient('${escapeAttr(c.cliente)}')">
+      <button class="client-head" onclick="toggleClient('${escapeJsAttr(c.cliente)}')">
         <div style="min-width:0;flex:1;">
           <div class="client-name-row">
             <span class="dot" style="background:${s.dot};"></span>
@@ -2147,6 +2147,14 @@ function escapeHtml(str) {
   return String(str).replace(/[&<>"']/g, m => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]));
 }
 function escapeAttr(str) { return String(str).replace(/'/g, "\\'"); }
+function escapeJsAttr(str) {
+  return String(str)
+    .replace(/\\/g, "\\\\")
+    .replace(/'/g, "\\'")
+    .replace(/"/g, "&quot;")
+    .replace(/\n/g, "\\n")
+    .replace(/\r/g, "");
+}
 
 function toggleClient(cliente) {
   expandedClient = expandedClient === cliente ? null : cliente;
