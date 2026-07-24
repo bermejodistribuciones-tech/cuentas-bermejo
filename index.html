@@ -1393,10 +1393,25 @@ function buildEmpleadoPrintRow(m) {
   </tr>`;
 }
 
+function empleadoSaldoPeriodo(nombreEmpleado, desde, hasta) {
+  const jorn = jornadasData.filter(j =>
+    (j.empleado || "").trim().toLowerCase() === (nombreEmpleado || "").trim().toLowerCase() &&
+    !j.pagado && (!desde || j.fecha >= desde) && (!hasta || j.fecha <= hasta));
+  const adel = adelantosData.filter(a =>
+    (a.empleado || "").trim().toLowerCase() === (nombreEmpleado || "").trim().toLowerCase() &&
+    (!desde || a.fecha >= desde) && (!hasta || a.fecha <= hasta));
+  const totalJornadas = jorn.reduce((s, j) => s + Number(j.monto || 0), 0);
+  const totalAdelantos = adel.reduce((s, a) => s + adelantoRestante(a), 0);
+  return totalJornadas - totalAdelantos;
+}
+
 function renderEmpleadoDetail(id) {
   const e = empleadosData.find(x => x.id === id);
   if (!e) return;
-  const saldo = empleadoSaldo(e.nombre);
+  const desde = document.getElementById("empleadoDesde").value;
+  const hasta = document.getElementById("empleadoHasta").value;
+  const hayFiltro = !!(desde || hasta);
+  const saldo = hayFiltro ? empleadoSaldoPeriodo(e.nombre, desde, hasta) : empleadoSaldo(e.nombre);
   const saldoLabel = saldo < 0 ? `A favor de la empresa ${money(Math.abs(saldo))}` : money(saldo);
   const saldoColor = saldo > 0 ? "#1E293B" : saldo < 0 ? "#7C3AED" : "#12894F";
 
@@ -1404,19 +1419,26 @@ function renderEmpleadoDetail(id) {
     <div style="margin-bottom:4px;">
       <div style="font-weight:700; font-size:16px;">${escapeHtml(e.nombre)}</div>
       <div style="font-size:12px; color:#94A3B8;">${e.telefono ? escapeHtml(e.telefono) : ""}${e.montoDiario ? (e.telefono ? " · " : "") + "Jornal " + money(e.montoDiario) : ""}</div>
-      <div style="font-size:13px; margin-top:8px;">Saldo a pagar: <span style="font-weight:700; color:${saldoColor};">${saldoLabel}</span></div>
+      <div style="font-size:13px; margin-top:8px;">Saldo a pagar${hayFiltro ? " (del período elegido)" : ""}: <span style="font-weight:700; color:${saldoColor};">${saldoLabel}</span></div>
     </div>
   `;
 
-  const desde = document.getElementById("empleadoDesde").value;
-  const hasta = document.getElementById("empleadoHasta").value;
   const todos = getMovimientosEmpleado(e.nombre);
-  const filtrados = todos.filter(m => (!desde || m.fecha >= desde) && (!hasta || m.fecha <= hasta));
+  let filtrados;
+  if (hayFiltro) {
+    filtrados = todos.filter(m => (!desde || m.fecha >= desde) && (!hasta || m.fecha <= hasta));
+  } else {
+    filtrados = todos.filter(m => {
+      if (m._tipo === "jornada") return !m._raw.pagado;
+      if (m._tipo === "adelanto") return adelantoRestante(m._raw) > 0;
+      return false; // oculta los movimientos de "pago en efectivo" ya resueltos
+    });
+  }
 
   if (todos.length === 0) {
     document.getElementById("empleadoMovList").innerHTML = `<div class="empty-msg">Todavía no hay días ni adelantos cargados.</div>`;
   } else if (filtrados.length === 0) {
-    document.getElementById("empleadoMovList").innerHTML = `<div class="empty-msg">Sin movimientos en este período.</div>`;
+    document.getElementById("empleadoMovList").innerHTML = `<div class="empty-msg">${hayFiltro ? "Sin movimientos en este período." : "No hay nada pendiente. Buscá por fecha arriba para ver el historial completo."}</div>`;
   } else {
     document.getElementById("empleadoMovList").innerHTML = `<div style="max-height:280px; overflow-y:auto; display:flex; flex-direction:column; gap:6px;">` +
       filtrados.map(buildEmpleadoMovRow).join("") + `</div>`;
@@ -1426,7 +1448,8 @@ function renderEmpleadoDetail(id) {
   const rangoTexto = desde || hasta
     ? `Movimientos del ${desde ? fmtDate(desde) : "inicio"} al ${hasta ? fmtDate(hasta) : "hoy"}`
     : "Historial completo";
-  const saldoFinal = filtrados.length ? filtrados[filtrados.length - 1].saldoCorriente : 0;
+  const filtradosParaPdf = todos.filter(m => (!desde || m.fecha >= desde) && (!hasta || m.fecha <= hasta));
+  const saldoFinal = filtradosParaPdf.length ? filtradosParaPdf[filtradosParaPdf.length - 1].saldoCorriente : 0;
   const saldoFinalLabel = saldoFinal < 0 ? `A favor de la empresa ${money(Math.abs(saldoFinal))}` : money(saldoFinal);
 
   document.getElementById("printArea").innerHTML = `
@@ -1439,7 +1462,7 @@ function renderEmpleadoDetail(id) {
       <div style="font-size:12px; color:#64748B; margin-bottom:14px;">${e.telefono ? "Tel: " + escapeHtml(e.telefono) : ""}</div>
       <table>
         <thead><tr><th>Fecha</th><th>Tipo</th><th>Detalle</th><th>Monto</th><th>Saldo</th></tr></thead>
-        <tbody>${filtrados.map(buildEmpleadoPrintRow).join("") || `<tr><td colspan="5">Sin movimientos en este período</td></tr>`}</tbody>
+        <tbody>${filtradosParaPdf.map(buildEmpleadoPrintRow).join("") || `<tr><td colspan="5">Sin movimientos en este período</td></tr>`}</tbody>
       </table>
       <div style="margin-top:16px; font-size:14px; font-weight:700;">Saldo al final del período: ${saldoFinalLabel}</div>
     </div>
@@ -2096,7 +2119,9 @@ function render() {
   listEl.innerHTML = filtered.map(c => {
     const s = STATUS_META[c.peorEstado];
     const isOpen = expandedClient === c.cliente;
-    const debtsHtml = c.debts.sort((a, b) => a.fechaEntrega < b.fechaEntrega ? 1 : -1).map(d => {
+    const debtsPendientes = c.debts.filter(d => statusOf(d) !== "cobrado");
+    const debtsAMostrar = debtsPendientes.length > 0 ? debtsPendientes : [];
+    const debtsHtml = debtsAMostrar.sort((a, b) => a.fechaEntrega < b.fechaEntrega ? 1 : -1).map(d => {
       const ds = STATUS_META[statusOf(d)];
       const saldo = saldoOf(d);
       const cobrado = montoCobradoOf(d);
@@ -2136,7 +2161,7 @@ function render() {
         </div>
       </button>
       <div class="client-body" style="display:${isOpen ? "block" : "none"};">
-        ${debtsHtml}
+        ${debtsPendientes.length === 0 ? `<div style="font-size:12px; color:#94A3B8; padding:6px 0;">No hay deudas pendientes. Para ver el historial completo (pagadas incluidas), andá a Clientes → tocá el nombre → Estado de cuenta.</div>` : debtsHtml}
         ${c.telefono ? `<a class="wa-link-full" href="${waLink(c.telefono)}" target="_blank">💬 Escribir a ${escapeHtml(c.cliente.split(" ")[0])}</a>` : ""}
       </div>
     </div>`;
